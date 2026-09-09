@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HubSpot — Qualification rapide d'appel
 // @namespace    https://webdentiste.eu/
-// @version      0.3.0
+// @version      0.4.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot (type + résultat) en un raccourci clavier.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -171,18 +171,24 @@
   // Sélection d'une option
   // ---------------------------------------------------------------------------
 
-  const OPTION_SELECTOR = [
-    '[role="option"]',
+  // Rôles ARIA d'abord : c'est ce que rend un vrai menu ouvert.
+  const OPTION_SELECTOR = '[role="option"], [role="menuitem"], [role="listbox"] li, [role="menu"] li';
+
+  // Repli pour les composants qui ne posent pas de rôle. Ratisse large — la
+  // barre latérale et les listes de propriétés matchent aussi — donc à
+  // n'utiliser que sur les éléments apparus après le clic.
+  const BROAD_OPTION_SELECTOR = [
+    OPTION_SELECTOR,
     '[data-test-id*="option"]',
-    '[role="listbox"] li',
-    '[role="menuitem"]',
+    '[class*="option"]',
     '[class*="dropdown"] li',
     '[class*="menu"] li',
     '[class*="select"] li',
   ].join(', ');
 
-  function visibleOptions() {
-    return [...document.querySelectorAll(OPTION_SELECTOR)].filter(isVisible);
+  function optionNodes(broad) {
+    return [...document.querySelectorAll(broad ? BROAD_OPTION_SELECTOR : OPTION_SELECTOR)]
+      .filter(isVisible);
   }
 
   function matchOption(options, wanted) {
@@ -194,21 +200,22 @@
     );
   }
 
-  /** Champ de saisie dans le menu ouvert, pour filtrer une longue liste. */
-  function openSearchInput() {
-    return [...document.querySelectorAll('input:not([type="hidden"])')]
-      .filter(isVisible)
-      .find((i) => i.getAttribute('role') === 'combobox' || /search|recherch|filtr/i.test(
-        (i.placeholder || '') + (i.getAttribute('aria-label') || '')
-      ));
+  /** Valeur actuellement portée par un déclencheur. */
+  function readValue(el) {
+    if (el.tagName === 'SELECT') return (el.options[el.selectedIndex] || {}).textContent || '';
+    if (el.tagName === 'INPUT') return el.value || '';
+    return el.textContent || '';
   }
 
-  /** Ouvre le champ, sélectionne l'option, renvoie true si ça a marché. */
+  /** Ouvre le champ, sélectionne l'option, vérifie que la valeur a bien pris. */
   async function selectValue(action) {
     const found = findTrigger(action.field);
     if (!found) return { ok: false, why: `champ introuvable : ${action.name}` };
-
     const { trigger } = found;
+
+    if (norm(readValue(trigger)).includes(norm(action.value))) {
+      return { ok: true, note: `${action.name} déjà à la bonne valeur` };
+    }
 
     // Cas simple : un vrai <select> natif.
     if (trigger.tagName === 'SELECT') {
@@ -219,20 +226,38 @@
       return { ok: true };
     }
 
-    realClick(trigger);
+    // La page contient en permanence des <li> et des [data-test-id*="option"]
+    // qui ne sont pas des options de ce champ (navigation, listes de
+    // propriétés). On photographie l'existant pour ne retenir ensuite que ce
+    // qui apparaît réellement à l'ouverture du menu.
+    const optionsBefore = new Set(optionNodes(true));
+    const inputsBefore = new Set(document.querySelectorAll('input'));
 
-    // Laisse le menu se peindre, puis tente une sélection directe.
+    realClick(trigger);
     await sleep(250);
-    let option = matchOption(visibleOptions(), action.value);
+
+    // Priorité aux éléments apparus après le clic. En dernier recours seulement,
+    // le sélecteur strict sur toute la page : il couvre le cas où le menu était
+    // déjà ouvert (donc absent du diff) sans ramasser la navigation, qui ne
+    // porte pas de rôle ARIA d'option.
+    const fresh = (broad) => optionNodes(broad).filter((el) => !optionsBefore.has(el));
+    const search = () =>
+      matchOption(fresh(false), action.value) ||
+      matchOption(fresh(true), action.value) ||
+      matchOption(optionNodes(false), action.value);
+
+    let option = search();
 
     // Liste longue : on filtre par saisie avant de re-chercher.
     if (!option) {
-      const search = openSearchInput();
-      if (search) {
-        setReactValue(search, action.value);
+      const searchInput = [...document.querySelectorAll('input:not([type="hidden"])')]
+        .find((i) => !inputsBefore.has(i) && isVisible(i))
+        || (trigger.tagName === 'INPUT' ? trigger : null);
+      if (searchInput) {
+        setReactValue(searchInput, action.value);
         await sleep(350);
       }
-      option = await waitFor(() => matchOption(visibleOptions(), action.value));
+      option = await waitFor(search);
     }
 
     if (!option) {
@@ -241,8 +266,17 @@
     }
 
     realClick(option);
-    await sleep(200);
-    return { ok: true };
+
+    // React remonte souvent un nouveau noeud : on relit le champ plutôt que de
+    // garder la référence d'avant le clic.
+    const confirmed = await waitFor(() => {
+      const again = findTrigger(action.field);
+      return again && norm(readValue(again.trigger)).includes(norm(action.value)) ? true : null;
+    }, 2000);
+
+    return confirmed
+      ? { ok: true }
+      : { ok: true, unverified: true, why: `${action.name} : option cliquée, valeur non confirmée` };
   }
 
   async function save() {
@@ -264,6 +298,7 @@
     if (running) return;
     running = true;
     try {
+      const warnings = [];
       for (const action of CONFIG.actions) {
         report('pending', `… ${action.name}`);
         const result = await selectValue(action);
@@ -272,12 +307,15 @@
           report('error', `Échec — ${result.why}`);
           return;
         }
+        if (result.why) { console.warn('[hs-quick-call]', result.why); warnings.push(result.why); }
+        if (result.note) console.info('[hs-quick-call]', result.note);
       }
       if (CONFIG.autoSave && !(await save())) {
         report('error', 'Champs remplis, mais bouton Enregistrer introuvable');
         return;
       }
-      report('success', 'Appel qualifié ✓');
+      report(warnings.length ? 'error' : 'success',
+        warnings.length ? `À vérifier — ${warnings.join(' ; ')}` : 'Appel qualifié ✓');
     } catch (err) {
       console.error('[hs-quick-call]', err);
       report('error', 'Erreur — voir la console');
@@ -382,6 +420,7 @@
       labels.slice(0, 5).forEach((l) => lines.push(`    libellé ${describe(l)}`));
       const found = findTrigger(action.field);
       lines.push(`    déclencheur = ${found ? describe(found.trigger) : 'AUCUN'}`);
+      if (found) lines.push(`    valeur actuelle = "${readValue(found.trigger).trim().slice(0, 60)}"`);
     }
 
     const triggers = [...document.querySelectorAll('[role="combobox"], button[aria-haspopup], select')]
@@ -389,7 +428,7 @@
     lines.push(`Menus visibles (${triggers.length}) :`);
     triggers.slice(0, 25).forEach((t) => lines.push(`    ${describe(t)}`));
 
-    const options = visibleOptions();
+    const options = optionNodes(false);
     lines.push(`Options actuellement ouvertes (${options.length}) :`);
     options.slice(0, 40).forEach((o) => lines.push(`    ${describe(o)}`));
 
@@ -549,7 +588,7 @@
   mountButton();
 
   // Accès manuel depuis la console, frame par frame.
-  window.hsQuickCall = { run, probe, probeText, trigger, selectValue, findTrigger, visibleOptions, hasAllFields, CONFIG };
+  window.hsQuickCall = { run, probe, probeText, trigger, selectValue, findTrigger, optionNodes, readValue, hasAllFields, CONFIG };
 
   console.info(`[hs-quick-call] chargé (frame ${FRAME}) — Ctrl+Shift+K qualifier, Ctrl+Shift+J sonder`);
 })();

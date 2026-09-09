@@ -6,6 +6,12 @@ const script = fs.readFileSync(new URL('../userscript/hubspot-quick-call-log.use
 // Approximation de l'éditeur d'appel HubSpot : libellé + bouton déclencheur,
 // menu rendu dans un portail attaché au body à l'ouverture.
 const HTML = `<!doctype html><html><body>
+  <nav class="nav-menu">
+    <ul><li>Répondeur/Pas de réponse</li><li>Call Commercial : prospection</li></ul>
+  </nav>
+  <div class="property-list">
+    <span data-test-id="options_co_logiciel_ia">Options - co logiciel IA</span>
+  </div>
   <div class="editor">
     <div class="field">
       <label>Type d'appel</label>
@@ -60,6 +66,12 @@ for (const [testId, values] of Object.entries(OPTIONS)) {
   });
 }
 
+// Le composant réel se referme sur Escape : sans ça, un menu resté ouvert
+// fausse les tests suivants.
+window.document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') window.document.querySelector('[role="listbox"]')?.remove();
+});
+
 window.eval(script);
 
 const results = [];
@@ -113,6 +125,25 @@ const probe = window.hsQuickCall.probeText();
 check('la sonde nomme les deux champs',
   probe.includes("Type d'appel") && probe.includes("Résultat de l'appel"));
 check('la sonde liste les menus détectés', /Menus visibles \(2\)/.test(probe));
+check('la sonde ne compte pas la navigation comme des options ouvertes',
+  /Options actuellement ouvertes \(0\)/.test(probe),
+  probe.split('\n').find((l) => l.startsWith('Options')));
+check('la sonde affiche la valeur actuelle du champ',
+  probe.includes('valeur actuelle = "Call commercial: PROSPECTION"'));
+
+// 7. Le bruit permanent de la page n'est jamais cliqué
+const outcome = window.document.querySelector('[data-test-id="call-outcome-select"]');
+outcome.removeAttribute('data-selected');
+outcome.textContent = 'Sélectionner';
+const noise = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[1]);
+check('sélectionne la vraie option malgré un <li> de nav au texte identique',
+  noise.ok && outcome.dataset.selected === 'Répondeur/Pas de réponse',
+  JSON.stringify(noise));
+
+// 8. Champ déjà rempli : on ne rouvre pas le menu
+const already = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[1]);
+check('ne refait rien si la valeur est déjà bonne',
+  already.ok && /déjà à la bonne valeur/.test(already.note || ''), JSON.stringify(already));
 
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {

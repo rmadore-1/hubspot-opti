@@ -69,6 +69,27 @@ chronologie) avant de déclencher le raccourci.
 Un bandeau en bas à droite indique la progression : bleu pendant l'exécution,
 turquoise si tout est passé, rouge en cas d'échec avec le nom de l'action fautive.
 
+### Comment une option est identifiée
+
+La page HubSpot contient en permanence des dizaines d'éléments qui ressemblent à
+des options : la navigation latérale (`[class*="menu"] li`), les listes de
+propriétés (`[data-test-id*="option"]` — un champ nommé `options_co_logiciel_ia`
+matche). Chercher l'option dans toute la page reviendrait à risquer un clic sur
+un élément de navigation portant le même libellé.
+
+Le script photographie donc les candidats **avant** d'ouvrir le menu et ne
+retient ensuite que ce qui est apparu depuis. Trois passes, dans l'ordre :
+
+1. éléments nouveaux portant un rôle ARIA d'option ;
+2. éléments nouveaux au sens large (composants sans rôle) ;
+3. en dernier recours, rôle ARIA strict sur toute la page — pour le cas où le
+   menu était déjà ouvert avant le clic, donc absent du diff.
+
+Après le clic, le script **relit le champ et vérifie que la valeur a pris**. Si
+elle ne se confirme pas en deux secondes, il continue mais le bandeau le signale
+plutôt que d'annoncer un succès. Un champ déjà à la bonne valeur n'est pas
+rouvert.
+
 ### Si ça ne trouve pas les champs
 
 Les sélecteurs sont volontairement **basés sur les libellés visibles** plutôt que
