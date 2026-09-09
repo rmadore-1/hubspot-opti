@@ -21,6 +21,22 @@ un changement de DOM côté HubSpot casse le ciblage. C'est assumé : cet outil 
 un banc d'essai pour valider le gain de temps avant de porter la logique dans la
 private app (voir *Suite* plus bas).
 
+### L'app HubSpot est un empilement d'iframes
+
+C'est le point qui gouverne l'architecture du script. La fiche contact
+(`/contacts/.../record/...`) et le widget d'appel (`/calling/.../twilio`, app
+`calling-widget-ui`) sont des **documents séparés**. Un script qui ne regarde
+qu'un seul `document` ne voit donc pas forcément les champs.
+
+Le script est injecté dans chaque frame. Celle qui contient réellement les deux
+champs se déclare et exécute les actions ; les autres restent passives. Le
+pilotage — bouton flottant, bandeau d'état, collecte de la sonde — vit dans la
+frame principale et communique avec les autres par `postMessage`. Le raccourci
+clavier est écouté partout, puisque le focus peut être dans le widget d'appel.
+
+Conséquence pratique : **le raccourci marche quel que soit l'endroit où tu as
+cliqué en dernier**, et la sonde agrège les rapports de toutes les frames.
+
 ### Installation
 
 1. Installer [Tampermonkey](https://www.tampermonkey.net/) (Chrome, Edge, Firefox).
@@ -55,11 +71,15 @@ sur les classes CSS (obfusquées et instables chez HubSpot). Si un champ n'est p
 trouvé :
 
 1. Ouvrir l'éditeur d'appel, presser `Ctrl+Shift+J`.
-2. Lire la console : elle liste les libellés candidats, le déclencheur retenu
-   pour chaque action, et tous les menus visibles de la page avec leurs
-   `data-test-id`.
+2. La sonde interroge toutes les frames, imprime un rapport texte dans la
+   console et **le copie dans le presse-papier**. Il liste, frame par frame :
+   les libellés candidats, le déclencheur retenu pour chaque action, tous les
+   menus visibles avec leurs `data-test-id`, et les options ouvertes.
 3. Ajuster `CONFIG.actions[].field` avec le libellé réellement affiché, ou
    `CONFIG.actions[].value` avec l'intitulé exact de l'option.
+
+Le rapport est aussi disponible dans `window.__hsProbe` si la copie automatique
+est bloquée.
 
 La comparaison ignore la casse, les accents et les espaces autour des `:`, donc
 `Call commercial: Prospection` matche `Call Commercial : prospection`.
@@ -95,8 +115,24 @@ que tu n'as pas vérifié que les deux menus se remplissent correctement.
   Tampermonkey et le script. Pas de déploiement centralisé, pas de versioning.
 - **Pas de garde-fou** : le script ne vérifie pas qu'il agit sur le bon appel. Il
   cible le premier éditeur visible contenant les champs attendus.
-- **Deux actions sur quatre** : les deux autres actions du workflow restent à
-  spécifier.
+- **La sauvegarde reste manuelle** tant que `autoSave` est sur `false`.
+
+## Tests
+
+`npm test` joue le script contre un DOM simulé (jsdom) qui reproduit la
+structure de l'éditeur d'appel : libellé + bouton déclencheur, menu rendu dans
+un portail attaché au `body`.
+
+```
+npm install
+npm test
+```
+
+Ce harnais valide la mécanique — détection par libellé, ouverture du menu,
+sélection de l'option, tolérance à la casse et aux accents, échecs propres. Il
+**ne valide pas** que les sélecteurs correspondent au vrai DOM HubSpot : seule
+la sonde sur le portail réel le dit. Son intérêt est de pouvoir modifier la
+logique sans repasser par un test manuel à chaque itération.
 
 ## Suite
 

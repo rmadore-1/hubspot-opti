@@ -1,0 +1,11 @@
+{
+  "name": "hubspot-opti",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/editor.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}

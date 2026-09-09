@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HubSpot — Qualification rapide d'appel
 // @namespace    https://webdentiste.eu/
-// @version      0.1.0
+// @version      0.2.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot (type + résultat) en un raccourci clavier.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -9,6 +9,13 @@
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
+
+// L'app HubSpot est un assemblage d'iframes : la fiche contact et le widget
+// d'appel (/calling/.../twilio) sont des documents distincts. Le script est donc
+// injecté dans chaque frame ; celle qui contient réellement les champs se
+// déclare et exécute les actions, les autres restent passives. Le pilotage
+// (bouton, bandeau, raccourcis) vit dans la frame principale et parle aux
+// autres par postMessage.
 
 (function () {
   'use strict';
@@ -23,7 +30,7 @@
     actions: [
       {
         name: "Type d'appel",
-        field: ["type d'appel", 'call type', "type d'activité", 'activity type', 'type'],
+        field: ["type d'appel", 'call type', "type d'activité", 'activity type'],
         value: 'Call Commercial : prospection',
       },
       {
@@ -41,12 +48,15 @@
     hotkey: { key: 'k', ctrlKey: true, shiftKey: true, altKey: false },
     probeHotkey: { key: 'j', ctrlKey: true, shiftKey: true, altKey: false },
 
-    // Bouton flottant en bas à droite (utile pour tester sans raccourci).
+    // Bouton flottant en bas à droite (frame principale uniquement).
     showButton: true,
 
     // Délai max d'attente pour qu'un champ ou une option apparaisse.
     timeoutMs: 4000,
   };
+
+  const IS_TOP = window.top === window;
+  const FRAME = IS_TOP ? 'principale' : location.pathname;
 
   // ---------------------------------------------------------------------------
   // Utilitaires
@@ -113,10 +123,10 @@
   ];
 
   /** Retourne les noeuds de texte qui ressemblent au libellé d'un des `names`. */
-  function findLabelNodes(root, names) {
+  function findLabelNodes(names) {
     const wanted = names.map(norm);
     const out = [];
-    for (const node of root.querySelectorAll('label, span, div, legend, h4, h5')) {
+    for (const node of document.querySelectorAll('label, span, div, legend, h4, h5')) {
       if (node.children.length > 2) continue; // on veut une feuille de texte, pas un conteneur
       const text = norm(node.textContent);
       if (!text || text.length > 60) continue;
@@ -143,13 +153,18 @@
     return null;
   }
 
-  /** Le déclencheur du champ décrit par `names`, dans l'éditeur d'appel courant. */
+  /** Le déclencheur du champ décrit par `names`, dans le document courant. */
   function findTrigger(names) {
-    for (const label of findLabelNodes(document, names)) {
+    for (const label of findLabelNodes(names)) {
       const trigger = triggerNear(label);
       if (trigger) return { trigger, label };
     }
     return null;
+  }
+
+  /** Cette frame contient-elle les champs de toutes les actions ? */
+  function hasAllFields() {
+    return CONFIG.actions.every((action) => findTrigger(action.field));
   }
 
   // ---------------------------------------------------------------------------
@@ -179,7 +194,7 @@
     );
   }
 
-  /** Champ d'input dans le menu ouvert, pour filtrer une longue liste. */
+  /** Champ de saisie dans le menu ouvert, pour filtrer une longue liste. */
   function openSearchInput() {
     return [...document.querySelectorAll('input:not([type="hidden"])')]
       .filter(isVisible)
@@ -191,22 +206,17 @@
   /** Ouvre le champ, sélectionne l'option, renvoie true si ça a marché. */
   async function selectValue(action) {
     const found = findTrigger(action.field);
-    if (!found) {
-      log(`Champ introuvable : ${action.name}`);
-      return false;
-    }
+    if (!found) return { ok: false, why: `champ introuvable : ${action.name}` };
+
     const { trigger } = found;
 
     // Cas simple : un vrai <select> natif.
     if (trigger.tagName === 'SELECT') {
       const option = [...trigger.options].find((o) => norm(o.textContent) === norm(action.value));
-      if (!option) {
-        log(`Option absente du <select> : ${action.value}`);
-        return false;
-      }
+      if (!option) return { ok: false, why: `option absente du <select> : ${action.value}` };
       trigger.value = option.value;
       trigger.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
+      return { ok: true };
     }
 
     realClick(trigger);
@@ -226,34 +236,26 @@
     }
 
     if (!option) {
-      log(`Option introuvable : « ${action.value} » (champ ${action.name})`);
       document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      return false;
+      return { ok: false, why: `option introuvable : « ${action.value} » (${action.name})` };
     }
 
     realClick(option);
     await sleep(200);
-    return true;
+    return { ok: true };
   }
-
-  // ---------------------------------------------------------------------------
-  // Enregistrement
-  // ---------------------------------------------------------------------------
 
   async function save() {
     const button = [...document.querySelectorAll('button')]
       .filter(isVisible)
       .find((b) => ['enregistrer', 'save'].includes(norm(b.textContent)));
-    if (!button) {
-      log('Bouton Enregistrer introuvable');
-      return false;
-    }
+    if (!button) return false;
     realClick(button);
     return true;
   }
 
   // ---------------------------------------------------------------------------
-  // Orchestration
+  // Exécution (dans la frame qui possède les champs)
   // ---------------------------------------------------------------------------
 
   let running = false;
@@ -263,75 +265,166 @@
     running = true;
     try {
       for (const action of CONFIG.actions) {
-        toast(`… ${action.name}`, 'pending');
-        const ok = await selectValue(action);
-        if (!ok) {
-          toast(`Échec : ${action.name}`, 'error');
+        report('pending', `… ${action.name}`);
+        const result = await selectValue(action);
+        if (!result.ok) {
+          console.warn('[hs-quick-call]', result.why);
+          report('error', `Échec — ${result.why}`);
           return;
         }
       }
-      if (CONFIG.autoSave) await save();
-      toast('Appel qualifié ✓', 'success');
+      if (CONFIG.autoSave && !(await save())) {
+        report('error', 'Champs remplis, mais bouton Enregistrer introuvable');
+        return;
+      }
+      report('success', 'Appel qualifié ✓');
     } catch (err) {
       console.error('[hs-quick-call]', err);
-      toast('Erreur — voir la console', 'error');
+      report('error', 'Erreur — voir la console');
     } finally {
       running = false;
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Mode sonde — dump ce que le script voit, pour ajuster les sélecteurs
+  // Communication inter-frames
+  // ---------------------------------------------------------------------------
+
+  /** Envoie un message à toutes les frames de l'onglet, la principale incluse. */
+  function broadcast(payload) {
+    const seen = new Set();
+    (function walk(win) {
+      if (!win || seen.has(win)) return;
+      seen.add(win);
+      try { win.postMessage({ __hsQuickCall: payload }, '*'); } catch (_) { /* cross-origin */ }
+      let count = 0;
+      try { count = win.frames.length; } catch (_) { return; }
+      for (let i = 0; i < count; i += 1) {
+        try { walk(win.frames[i]); } catch (_) { /* cross-origin */ }
+      }
+    })(window.top);
+  }
+
+  function toTop(payload) {
+    try { window.top.postMessage({ __hsQuickCall: payload }, '*'); } catch (_) { /* ignore */ }
+  }
+
+  /** Remonte un état à la frame principale, qui l'affiche. */
+  function report(kind, text) {
+    toTop({ type: 'status', kind, text });
+  }
+
+  let claimed = false;
+  let probeReports = [];
+
+  window.addEventListener('message', (event) => {
+    const msg = event.data && event.data.__hsQuickCall;
+    if (!msg || typeof msg !== 'object') return;
+
+    switch (msg.type) {
+      case 'run':
+        // Seule la frame qui porte tous les champs se déclare et exécute.
+        if (hasAllFields()) {
+          toTop({ type: 'claim', frame: FRAME });
+          run();
+        }
+        break;
+
+      case 'probe':
+        toTop({ type: 'probeReport', text: probeText() });
+        break;
+
+      case 'claim':
+        if (IS_TOP) claimed = true;
+        break;
+
+      case 'status':
+        if (IS_TOP) toast(msg.text, msg.kind);
+        break;
+
+      case 'probeReport':
+        if (IS_TOP) probeReports.push(msg.text);
+        break;
+    }
+  });
+
+  /** Déclenche depuis n'importe quelle frame (le focus clavier peut être partout). */
+  function trigger() {
+    claimed = false;
+    broadcast({ type: 'run' });
+    // Si aucune frame ne se déclare, c'est un problème de ciblage, pas d'exécution.
+    setTimeout(() => {
+      if (!claimed) toast('Champs introuvables — lance la sonde (Ctrl+Shift+J)', 'error');
+    }, 1500);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode sonde — un rapport texte, collable tel quel
   // ---------------------------------------------------------------------------
 
   function describe(el) {
-    return {
-      tag: el.tagName.toLowerCase(),
-      texte: (el.textContent || '').trim().slice(0, 60),
-      ariaLabel: el.getAttribute('aria-label'),
-      dataTestId: el.getAttribute('data-test-id') || el.getAttribute('data-selenium-test'),
-      classes: (el.className || '').toString().slice(0, 80),
-    };
+    const attrs = [
+      el.tagName.toLowerCase(),
+      el.getAttribute('data-test-id') && `test-id=${el.getAttribute('data-test-id')}`,
+      el.getAttribute('data-selenium-test') && `selenium=${el.getAttribute('data-selenium-test')}`,
+      el.getAttribute('aria-label') && `aria=${el.getAttribute('aria-label')}`,
+    ].filter(Boolean);
+    const text = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 50);
+    return `[${attrs.join(' ')}] "${text}"`;
   }
 
-  function probe() {
-    console.group('[hs-quick-call] sonde');
+  function probeText() {
+    const lines = [`=== FRAME ${FRAME} ===`];
 
     for (const action of CONFIG.actions) {
-      const labels = findLabelNodes(document, action.field);
-      console.log(`Champ « ${action.name} » — ${labels.length} libellé(s) candidat(s)`);
-      console.table(labels.map(describe));
+      const labels = findLabelNodes(action.field);
+      lines.push(`Champ « ${action.name} » — ${labels.length} libellé(s)`);
+      labels.slice(0, 5).forEach((l) => lines.push(`    libellé ${describe(l)}`));
       const found = findTrigger(action.field);
-      console.log('Déclencheur retenu :', found ? describe(found.trigger) : 'AUCUN', found?.trigger);
+      lines.push(`    déclencheur = ${found ? describe(found.trigger) : 'AUCUN'}`);
     }
-
-    const options = visibleOptions();
-    console.log(`Options actuellement visibles : ${options.length}`);
-    console.table(options.slice(0, 40).map(describe));
 
     const triggers = [...document.querySelectorAll('[role="combobox"], button[aria-haspopup], select')]
       .filter(isVisible);
-    console.log(`Tous les menus visibles de la page : ${triggers.length}`);
-    console.table(triggers.map(describe));
+    lines.push(`Menus visibles (${triggers.length}) :`);
+    triggers.slice(0, 25).forEach((t) => lines.push(`    ${describe(t)}`));
 
-    console.groupEnd();
-    window.__hsProbe = { triggers, options };
-    toast('Sonde envoyée dans la console', 'success');
+    const options = visibleOptions();
+    lines.push(`Options actuellement ouvertes (${options.length}) :`);
+    options.slice(0, 40).forEach((o) => lines.push(`    ${describe(o)}`));
+
+    return lines.join('\n');
+  }
+
+  /** Collecte les rapports de toutes les frames et les imprime en un bloc. */
+  function probe() {
+    probeReports = [];
+    broadcast({ type: 'probe' });
+    setTimeout(() => {
+      const text = probeReports.join('\n\n') || '(aucune frame n\'a répondu)';
+      console.log('%c[hs-quick-call] SONDE — copie tout le bloc ci-dessous', 'font-weight:bold');
+      console.log(text);
+      window.__hsProbe = text;
+      navigator.clipboard?.writeText(text)
+        .then(() => toast('Sonde copiée dans le presse-papier', 'success'))
+        .catch(() => toast('Sonde dans la console (window.__hsProbe)', 'success'));
+    }, 800);
   }
 
   // ---------------------------------------------------------------------------
-  // UI : toast + bouton flottant
+  // UI — frame principale uniquement
   // ---------------------------------------------------------------------------
 
   const COLORS = { pending: '#516f90', success: '#00a4bd', error: '#f2545b' };
   let toastEl = null;
 
   function toast(message, kind = 'pending') {
+    if (!IS_TOP) return;
     if (!toastEl) {
       toastEl = document.createElement('div');
       Object.assign(toastEl.style, {
         position: 'fixed', bottom: '76px', right: '20px', zIndex: '2147483647',
-        padding: '10px 14px', borderRadius: '6px', color: '#fff',
+        padding: '10px 14px', borderRadius: '6px', color: '#fff', maxWidth: '340px',
         font: '500 13px/1.4 system-ui, sans-serif', boxShadow: '0 2px 12px rgba(0,0,0,.25)',
         pointerEvents: 'none', transition: 'opacity .2s',
       });
@@ -341,25 +434,22 @@
     toastEl.style.background = COLORS[kind] || COLORS.pending;
     toastEl.style.opacity = '1';
     clearTimeout(toastEl._timer);
-    toastEl._timer = setTimeout(() => { toastEl.style.opacity = '0'; }, 3000);
-  }
-
-  function log(message) {
-    console.warn('[hs-quick-call]', message);
+    toastEl._timer = setTimeout(() => { toastEl.style.opacity = '0'; }, 4000);
   }
 
   function mountButton() {
-    if (!CONFIG.showButton || document.getElementById('hs-quick-call-btn')) return;
+    if (!IS_TOP || !CONFIG.showButton) return;
+    if (document.getElementById('hs-quick-call-btn')) return;
     const button = document.createElement('button');
     button.id = 'hs-quick-call-btn';
-    button.textContent = '⚡ Qualifier l\'appel';
+    button.textContent = "⚡ Qualifier l'appel";
     Object.assign(button.style, {
       position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483646',
       padding: '10px 16px', borderRadius: '24px', border: 'none', cursor: 'pointer',
       background: '#ff7a59', color: '#fff', font: '600 13px/1 system-ui, sans-serif',
       boxShadow: '0 2px 12px rgba(0,0,0,.25)',
     });
-    button.addEventListener('click', run);
+    button.addEventListener('click', trigger);
     document.body.appendChild(button);
   }
 
@@ -372,22 +462,31 @@
     );
   }
 
+  // Écouté dans chaque frame : le focus clavier peut être dans le widget d'appel.
   document.addEventListener('keydown', (event) => {
     if (matchesHotkey(event, CONFIG.hotkey)) {
       event.preventDefault();
-      run();
+      IS_TOP ? trigger() : toTop({ type: 'hotkey', which: 'run' });
     } else if (matchesHotkey(event, CONFIG.probeHotkey)) {
       event.preventDefault();
-      probe();
+      IS_TOP ? probe() : toTop({ type: 'hotkey', which: 'probe' });
     }
   }, true);
+
+  // La frame principale relaie les raccourcis captés par les iframes.
+  if (IS_TOP) {
+    window.addEventListener('message', (event) => {
+      const msg = event.data && event.data.__hsQuickCall;
+      if (msg && msg.type === 'hotkey') (msg.which === 'probe' ? probe : trigger)();
+    });
+  }
 
   // HubSpot est une SPA : le bouton disparaît à chaque navigation interne.
   new MutationObserver(mountButton).observe(document.body, { childList: true, subtree: false });
   mountButton();
 
-  // Accès manuel depuis la console pour tester pas à pas.
-  window.hsQuickCall = { run, probe, selectValue, findTrigger, visibleOptions, CONFIG };
+  // Accès manuel depuis la console, frame par frame.
+  window.hsQuickCall = { run, probe, probeText, trigger, selectValue, findTrigger, visibleOptions, hasAllFields, CONFIG };
 
-  console.info('[hs-quick-call] chargé — Ctrl+Shift+K pour qualifier, Ctrl+Shift+J pour sonder');
+  console.info(`[hs-quick-call] chargé (frame ${FRAME}) — Ctrl+Shift+K qualifier, Ctrl+Shift+J sonder`);
 })();
