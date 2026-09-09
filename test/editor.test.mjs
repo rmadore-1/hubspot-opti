@@ -4,7 +4,9 @@ import fs from 'fs';
 const script = fs.readFileSync(new URL('../userscript/hubspot-quick-call-log.user.js', import.meta.url), 'utf8');
 
 // Approximation de l'éditeur d'appel HubSpot : libellé + bouton déclencheur,
-// menu rendu dans un portail attaché au body à l'ouverture.
+// menu rendu dans un portail attaché au body. On reproduit aussi le bruit
+// permanent constaté sur le vrai portail — navigation et affichage des valeurs
+// courantes portent des sélecteurs qui ressemblent à des options.
 const HTML = `<!doctype html><html><body>
   <nav class="nav-menu">
     <ul><li>Répondeur/Pas de réponse</li><li>Call Commercial : prospection</li></ul>
@@ -50,12 +52,11 @@ window.Element.prototype.getClientRects = function () {
 };
 window.Element.prototype.scrollIntoView = function () {};
 
-// Câblage des menus : mousedown ouvre un listbox en portail, clic sur une option
-// écrit la valeur dans le déclencheur et referme — comme le composant HubSpot.
+// Câblage des menus : mousedown bascule un listbox en portail, clic sur une
+// option écrit la valeur dans le déclencheur et referme — comme HubSpot.
 for (const [testId, values] of Object.entries(OPTIONS)) {
   const trigger = window.document.querySelector(`[data-test-id="${testId}"]`);
   trigger.addEventListener('mousedown', () => {
-    // Un vrai menu bascule : reclicher le déclencheur le referme.
     const open = window.document.querySelector('[role="listbox"]');
     if (open) { open.remove(); return; }
     const listbox = window.document.createElement('ul');
@@ -75,62 +76,91 @@ for (const [testId, values] of Object.entries(OPTIONS)) {
   });
 }
 
-// Le composant réel se referme sur Escape : sans ça, un menu resté ouvert
-// fausse les tests suivants.
 window.document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') window.document.querySelector('[role="listbox"]')?.remove();
 });
 
 window.eval(script);
 
+const hs = window.hsQuickCall;
 const results = [];
-const check = (name, condition, detail = '') =>
-  results.push({ name, ok: !!condition, detail });
+const check = (name, condition, detail = '') => results.push({ name, ok: !!condition, detail });
+const el = (testId) => window.document.querySelector(`[data-test-id="${testId}"]`);
+const reset = (testId) => { const t = el(testId); t.removeAttribute('data-selected'); t.textContent = 'Sélectionner'; };
+const press = (init) => window.document.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, ...init }));
+const release = (init) => window.document.dispatchEvent(new window.KeyboardEvent('keyup', { bubbles: true, ...init }));
 
 // 1. Détection des champs
-const typeTrigger = window.hsQuickCall.findTrigger(["type d'appel"]);
-const outcomeTrigger = window.hsQuickCall.findTrigger(["résultat de l'appel"]);
 check('trouve le déclencheur "Type d\'appel"',
-  typeTrigger?.trigger?.dataset.testId === 'call-type-select',
-  typeTrigger?.trigger?.outerHTML.slice(0, 60));
+  hs.findTrigger(["type d'appel"])?.trigger?.dataset.testId === 'call-type-select');
 check('trouve le déclencheur "Résultat de l\'appel"',
-  outcomeTrigger?.trigger?.dataset.testId === 'call-outcome-select',
-  outcomeTrigger?.trigger?.outerHTML.slice(0, 60));
-check('hasAllFields() vrai quand les deux champs sont là', window.hsQuickCall.hasAllFields());
+  hs.findTrigger(["résultat de l'appel"])?.trigger?.dataset.testId === 'call-outcome-select');
+check('reconnaît la frame qui porte les champs de la combinaison',
+  hs.hasFieldsFor(hs.presets[0]));
 
-// 2. Exécution complète
-await window.hsQuickCall.run();
-const typeValue = window.document.querySelector('[data-test-id="call-type-select"]').dataset.selected;
-const outcomeValue = window.document.querySelector('[data-test-id="call-outcome-select"]').dataset.selected;
-check('sélectionne le type d\'appel', typeValue === 'Call Commercial : prospection', `→ ${typeValue}`);
-check('sélectionne le résultat', outcomeValue === 'Répondeur/Pas de réponse', `→ ${outcomeValue}`);
+// 2. Exécution d'une combinaison
+await hs.runPreset(hs.presets[0]);
+check('applique le type d\'appel',
+  el('call-type-select').dataset.selected === 'Call Commercial : prospection',
+  el('call-type-select').dataset.selected);
+check('applique le résultat',
+  el('call-outcome-select').dataset.selected === 'Répondeur/Pas de réponse',
+  el('call-outcome-select').dataset.selected);
 check('referme le menu après sélection', !window.document.querySelector('[role="listbox"]'));
 
-// 3. Tolérance sur la casse / les accents / l'espacement des deux-points
-window.document.querySelector('[data-test-id="call-type-select"]').removeAttribute('data-selected');
+// 3. Absorption des valeurs affichées
+const absorbed = hs.readCurrentValues();
+check('absorbe les deux valeurs posées sur l\'appel',
+  absorbed["Type d'appel"] === 'Call Commercial : prospection'
+  && absorbed["Résultat de l'appel"] === 'Répondeur/Pas de réponse',
+  JSON.stringify(absorbed));
+
+reset('call-outcome-select');
+check('n\'absorbe pas le texte d\'un champ vide',
+  hs.readCurrentValues()["Résultat de l'appel"] === undefined,
+  JSON.stringify(hs.readCurrentValues()));
+
+// 4. Tolérance casse / accents / espacement des deux-points
+reset('call-type-select');
 OPTIONS['call-type-select'][0] = 'Call commercial: PROSPECTION';
-window.document.querySelector('[data-test-id="call-type-select"]').textContent = 'Sélectionner';
-const loose = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[0]);
+const loose = await hs.selectValue(hs.actionsFor(hs.presets[0])[0]);
 check('matche malgré casse et espacement différents',
-  loose.ok && window.document.querySelector('[data-test-id="call-type-select"]').dataset.selected === 'Call commercial: PROSPECTION',
+  loose.ok && el('call-type-select').dataset.selected === 'Call commercial: PROSPECTION',
   JSON.stringify(loose));
 
-// 4. Échec propre quand l'option n'existe pas
-const missing = await window.hsQuickCall.selectValue({
-  name: 'Test', field: ["résultat de l'appel"], value: 'Valeur qui n\'existe pas',
-});
+// 5. Échecs propres
+const missing = await hs.selectValue({ name: 'Test', field: ["résultat de l'appel"], value: 'Valeur absente' });
 check('échoue proprement sur une option absente',
   missing.ok === false && /option introuvable/.test(missing.why), missing.why);
-
-// 5. Échec propre quand le champ n'existe pas
-const noField = await window.hsQuickCall.selectValue({
-  name: 'Fantôme', field: ['champ inexistant'], value: 'x',
-});
+const noField = await hs.selectValue({ name: 'Fantôme', field: ['champ inexistant'], value: 'x' });
 check('échoue proprement sur un champ absent',
   noField.ok === false && /champ introuvable/.test(noField.why), noField.why);
 
-// 6. La sonde produit un rapport lisible
-const probe = window.hsQuickCall.probeText();
+// 6. Le bruit permanent de la page n'est jamais cliqué
+reset('call-outcome-select');
+const noise = await hs.selectValue(hs.actionsFor(hs.presets[0])[1]);
+check('sélectionne la vraie option malgré des leurres au texte identique',
+  noise.ok && el('call-outcome-select').dataset.selected === 'Répondeur/Pas de réponse',
+  JSON.stringify(noise));
+check('ne clique pas le span [role=option] qui affiche la valeur courante',
+  window.document.querySelector('.property-list [role="option"]').isConnected);
+
+// 7. Champ déjà rempli : on ne rouvre pas le menu
+const already = await hs.selectValue(hs.actionsFor(hs.presets[0])[1]);
+check('ne refait rien si la valeur est déjà bonne',
+  already.ok && /déjà à la bonne valeur/.test(already.note || ''), JSON.stringify(already));
+
+// 8. Un menu resté ouvert ne bloque pas
+reset('call-type-select');
+el('call-type-select').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+check('un menu est bien ouvert avant l\'appel', !!window.document.querySelector('[role="listbox"]'));
+const reopened = await hs.selectValue(hs.actionsFor(hs.presets[0])[0]);
+check('se rattrape quand le menu était déjà ouvert',
+  reopened.ok && el('call-type-select').dataset.selected === 'Call commercial: PROSPECTION',
+  JSON.stringify(reopened));
+
+// 9. Sonde
+const probe = hs.probeText();
 check('la sonde nomme les deux champs',
   probe.includes("Type d'appel") && probe.includes("Résultat de l'appel"));
 check('la sonde liste les menus détectés', /Menus visibles \(2\)/.test(probe));
@@ -140,35 +170,7 @@ check('la sonde annonce les candidats bruts sans les confondre avec un menu ouve
 check('la sonde affiche la valeur actuelle du champ',
   probe.includes('valeur actuelle = "Call commercial: PROSPECTION"'));
 
-// 7. Le bruit permanent de la page n'est jamais cliqué
-const outcome = window.document.querySelector('[data-test-id="call-outcome-select"]');
-outcome.removeAttribute('data-selected');
-outcome.textContent = 'Sélectionner';
-const noise = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[1]);
-check('sélectionne la vraie option malgré des leurres au texte identique',
-  noise.ok && outcome.dataset.selected === 'Répondeur/Pas de réponse',
-  JSON.stringify(noise));
-check('ne clique pas le span [role=option] qui affiche la valeur courante',
-  window.document.querySelector('.property-list [role="option"]').isConnected);
-
-// 8. Champ déjà rempli : on ne rouvre pas le menu
-const already = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[1]);
-check('ne refait rien si la valeur est déjà bonne',
-  already.ok && /déjà à la bonne valeur/.test(already.note || ''), JSON.stringify(already));
-
-// 9. Un menu resté ouvert ne bloque pas : le premier clic le referme, on retente
-const type = window.document.querySelector('[data-test-id="call-type-select"]');
-type.removeAttribute('data-selected');
-type.textContent = 'Sélectionner';
-type.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true })); // menu déjà ouvert
-check('un menu est bien ouvert avant l\'appel', !!window.document.querySelector('[role="listbox"]'));
-const reopened = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[0]);
-check('se rattrape quand le menu était déjà ouvert',
-  reopened.ok && type.dataset.selected === 'Call commercial: PROSPECTION',
-  JSON.stringify(reopened));
-
-// 10. Raccourci : lecture, correspondance stricte, capture au clic droit
-const hs = window.hsQuickCall;
+// 10. Enregistrement d'un raccourci, avec retour visuel
 check('décrit le raccourci lisiblement',
   hs.describeHotkey({ key: 'k', ctrlKey: true, shiftKey: true }) === 'Ctrl+Maj+K',
   hs.describeHotkey({ key: 'k', ctrlKey: true, shiftKey: true }));
@@ -176,21 +178,31 @@ check('ne matche pas si un modificateur diffère',
   !hs.matchesHotkey({ key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: true },
     { key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false }));
 
-const press = (init) => window.document.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, ...init }));
-
-hs.captureHotkey();
-press({ key: 'p' }); // touche nue : refusée, on déclencherait en tapant une note
-check('refuse une touche sans modificateur', hs.hotkey.key === 'k', JSON.stringify(hs.hotkey));
-
+let live = [];
+let done = 'pas appelé';
+hs.recordHotkey((text) => live.push(text), (next) => { done = next; });
+press({ key: 'Control', ctrlKey: true });
+check('affiche les modificateurs enfoncés en direct',
+  live.includes('Ctrl+…'), JSON.stringify(live));
+release({ key: 'Control' });
+press({ key: 'p' });
+check('refuse une touche sans modificateur',
+  done === 'pas appelé' && live.includes('Ajoute Ctrl, Alt ou Cmd'), JSON.stringify(live));
 press({ key: 'M', ctrlKey: true, altKey: true });
-check('enregistre la nouvelle combinaison',
-  hs.hotkey.key === 'm' && hs.hotkey.ctrlKey && hs.hotkey.altKey, JSON.stringify(hs.hotkey));
-check('mémorise le raccourci pour la prochaine visite',
-  JSON.parse(window.localStorage.getItem('hsQuickCall.hotkey')).key === 'm');
+check('retient la combinaison complète',
+  done && done.key === 'm' && done.ctrlKey && done.altKey, JSON.stringify(done));
 
-hs.captureHotkey();
+done = 'pas appelé';
+hs.recordHotkey(() => {}, (next) => { done = next; });
 press({ key: 'Escape' });
-check('Échap laisse le raccourci inchangé', hs.hotkey.key === 'm');
+check('Échap annule sans rien changer', done === null, JSON.stringify(done));
+
+// 11. Persistance des combinaisons
+hs.presets[0].hotkey = { key: 'm', ctrlKey: true, shiftKey: false, altKey: true, metaKey: false };
+hs.savePresets();
+const stored = JSON.parse(window.localStorage.getItem('hsQuickCall.presets.v1'));
+check('mémorise les combinaisons pour la prochaine visite',
+  stored[0].hotkey.key === 'm' && stored[0].values["Type d'appel"], JSON.stringify(stored[0].hotkey));
 
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {
@@ -198,5 +210,4 @@ for (const r of results) {
 }
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} tests passés`);
-console.log('\n--- EXTRAIT DE SONDE ---\n' + probe.split('\n').slice(0, 12).join('\n'));
 process.exit(failed ? 1 : 0);

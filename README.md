@@ -9,6 +9,9 @@ raccourci clavier, au lieu de dérouler deux menus à la souris.
 
 Actions jouées (dans l'ordre) :
 
+Les valeurs et les raccourcis se configurent depuis l'interface. La combinaison
+livrée par défaut est *Répondeur / Prospection* :
+
 1. **Type d'appel** → `Call Commercial : prospection`
 2. **Résultat de l'appel** → `Répondeur/Pas de réponse`
 
@@ -52,27 +55,49 @@ Le `@match` couvre `app.hubspot.com`, `app-eu1.hubspot.com` et
 
 ### Utilisation
 
-Un seul bouton, **Répondeur / Prospection**, en bas à droite :
+En bas à droite : un bouton par **combinaison**, plus un bouton ⚙️.
 
 | Geste                  | Effet                                                |
 | ---------------------- | ---------------------------------------------------- |
-| Clic gauche            | Joue les actions sur l'appel ouvert                   |
-| Clic droit             | Change le raccourci clavier                           |
-| `Ctrl+Maj+K` (défaut)  | Idem clic gauche                                      |
+| Clic sur une combinaison | Applique ses valeurs à l'appel ouvert              |
+| Son raccourci          | Idem, sans quitter le clavier                         |
+| ⚙️                     | Ouvre le panneau de gestion des combinaisons          |
 
-Le clic droit attend la prochaine combinaison et la mémorise dans le navigateur
-(`localStorage`), donc elle survit aux rechargements. `Échap` annule. Une touche
-nue est refusée : sans modificateur, tu la déclencherais en tapant une note.
+Une combinaison est un ensemble de valeurs (`Type d'appel`, `Résultat de
+l'appel`) et, facultativement, un raccourci. Celle livrée par défaut est
+*Répondeur / Prospection*.
 
-Le raccourci par défaut utilise `Ctrl`, y compris sur macOS — `Cmd+Maj+K` est
-déjà pris par la console de Firefox. Si tu en choisis un autre, le survol du
-bouton rappelle lequel est actif.
+### Gérer les combinaisons
 
-L'éditeur d'appel doit être ouvert (appel sélectionné et déplié dans la
-chronologie) avant de déclencher le raccourci.
+Le panneau ⚙️ liste les combinaisons. Pour chacune :
 
-Un bandeau en bas à droite indique la progression : bleu pendant l'exécution,
-turquoise si tout est passé, rouge en cas d'échec avec le nom de l'action fautive.
+- **le nom**, éditable directement ;
+- **le bouton raccourci** — cliquer dessus met le bouton en écoute : les
+  modificateurs s'affichent au fur et à mesure que tu les enfonces (`Ctrl+…`),
+  la combinaison est retenue dès que tu ajoutes une vraie touche. `Échap`
+  annule, et un raccourci déjà pris par une autre combinaison est refusé ;
+- **Absorber** — recopie dans la combinaison ce qui est *actuellement posé sur
+  l'appel ouvert* ;
+- **Supprimer**.
+
+Le bouton **+ Ajouter depuis l'appel courant** crée une combinaison à partir de
+l'appel ouvert, nommée d'après les valeurs absorbées.
+
+L'absorption évite de retaper les libellés exacts — « Call Commercial :
+prospection » avec ses espaces autour du deux-points est précisément le genre de
+chaîne qu'on saisit mal. Elle ignore les champs vides : le texte « Sélectionner »
+n'est pas absorbé comme une valeur.
+
+Les champs n'étant pas forcément dans la frame principale, l'absorption passe par
+un aller-retour `postMessage` : la frame qui les porte répond avec ce qu'elle lit.
+
+Tout est mémorisé dans le `localStorage` du navigateur (`hsQuickCall.presets.v1`)
+et propagé aux iframes, qui écoutent aussi le clavier. Le raccourci unique des
+versions antérieures est repris automatiquement.
+
+Une touche nue est refusée : sans `Ctrl`, `Alt` ou `Cmd`, tu la déclencherais en
+tapant une note. Le raccourci par défaut utilise `Ctrl` même sur macOS —
+`Cmd+Maj+K` est déjà pris par la console de Firefox.
 
 ### Comment une option est identifiée
 
@@ -144,12 +169,15 @@ Tout est regroupé dans l'objet `CONFIG` en tête de fichier :
 
 | Clé           | Rôle                                                              |
 | ------------- | ----------------------------------------------------------------- |
-| `actions`     | Liste ordonnée `{ name, field[], value }`                          |
-| `autoSave`    | Clique *Enregistrer* après les actions. `false` par défaut         |
-| `hotkey`      | Raccourci **par défaut** — le clic droit le remplace durablement   |
-| `buttonLabel` | Texte du bouton                                                    |
-| `showButton`  | Affiche le bouton flottant                                         |
-| `timeoutMs`   | Attente max pour l'apparition d'un champ ou d'une option           |
+| `fields`         | Champs que le script sait lire et remplir (`name` + `labels`)   |
+| `defaultPresets` | Combinaisons livrées, utilisées au premier lancement            |
+| `autoSave`       | Clique *Enregistrer* après les actions. `false` par défaut      |
+| `showButtons`    | Affiche la barre de boutons                                     |
+| `timeoutMs`      | Attente max pour l'apparition d'un champ ou d'une option        |
+
+Au quotidien tu n'as plus à toucher au fichier : les combinaisons se gèrent
+depuis ⚙️. `CONFIG.fields` n'est à modifier que pour apprendre au script un
+**nouveau champ** (au-delà du type et du résultat d'appel).
 
 `autoSave` est à `false` volontairement : garde la main sur la sauvegarde tant
 que tu n'as pas vérifié que les deux menus se remplissent correctement.
@@ -162,6 +190,8 @@ que tu n'as pas vérifié que les deux menus se remplissent correctement.
 - **Pas de garde-fou** : le script ne vérifie pas qu'il agit sur le bon appel. Il
   cible le premier éditeur visible contenant les champs attendus.
 - **La sauvegarde reste manuelle** tant que `autoSave` est sur `false`.
+- **Les combinaisons sont locales au navigateur** : elles ne suivent ni le
+  profil HubSpot ni les autres postes.
 
 ## Tests
 
