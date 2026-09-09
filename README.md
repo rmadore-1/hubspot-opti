@@ -77,13 +77,18 @@ propriétés (`[data-test-id*="option"]` — un champ nommé `options_co_logicie
 matche). Chercher l'option dans toute la page reviendrait à risquer un clic sur
 un élément de navigation portant le même libellé.
 
-Le script photographie donc les candidats **avant** d'ouvrir le menu et ne
-retient ensuite que ce qui est apparu depuis. Trois passes, dans l'ordre :
+Pire : l'affichage des valeurs courantes porte lui-même `role="option"`. Un span
+« Répondeur/Pas de réponse » existe sur la page **avant tout clic**. Chercher
+l'option dans le document entier reviendrait à cliquer ce span.
 
-1. éléments nouveaux portant un rôle ARIA d'option ;
-2. éléments nouveaux au sens large (composants sans rôle) ;
-3. en dernier recours, rôle ARIA strict sur toute la page — pour le cas où le
-   menu était déjà ouvert avant le clic, donc absent du diff.
+Le script photographie donc les candidats **avant** d'ouvrir le menu et ne
+retient ensuite que ce qui est apparu depuis — d'abord les éléments portant un
+rôle ARIA d'option, puis au sens large pour les composants qui n'en posent pas.
+Il n'y a **pas** de repli sur la page entière, précisément à cause de ces leurres.
+
+Si le menu était déjà ouvert avant le clic, il figure dans la photo « avant » et
+le diff ne voit rien. Le clic l'ayant refermé (les menus basculent), le script
+retente une fois : la seconde photo part alors d'un état fermé.
 
 Après le clic, le script **relit le champ et vérifie que la valeur a pris**. Si
 elle ne se confirme pas en deux secondes, il continue mais le bandeau le signale

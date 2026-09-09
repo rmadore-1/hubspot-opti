@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HubSpot — Qualification rapide d'appel
 // @namespace    https://webdentiste.eu/
-// @version      0.4.0
+// @version      0.5.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot (type + résultat) en un raccourci clavier.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -226,30 +226,26 @@
       return { ok: true };
     }
 
-    // La page contient en permanence des <li> et des [data-test-id*="option"]
-    // qui ne sont pas des options de ce champ (navigation, listes de
-    // propriétés). On photographie l'existant pour ne retenir ensuite que ce
-    // qui apparaît réellement à l'ouverture du menu.
-    const optionsBefore = new Set(optionNodes(true));
-    const inputsBefore = new Set(document.querySelectorAll('input'));
+    // La page porte en permanence des éléments qui ressemblent à des options :
+    // navigation, listes de propriétés, et surtout l'affichage des valeurs
+    // courantes — un span « Répondeur/Pas de réponse » existe déjà avant tout
+    // clic. Chercher dans toute la page reviendrait donc à cliquer ce span.
+    // On ne retient que ce qui apparaît à l'ouverture du menu.
+    const baseline = optionNodes(true).length;
 
-    realClick(trigger);
-    await sleep(250);
+    const openAndFind = async () => {
+      const optionsBefore = new Set(optionNodes(true));
+      const inputsBefore = new Set(document.querySelectorAll('input'));
 
-    // Priorité aux éléments apparus après le clic. En dernier recours seulement,
-    // le sélecteur strict sur toute la page : il couvre le cas où le menu était
-    // déjà ouvert (donc absent du diff) sans ramasser la navigation, qui ne
-    // porte pas de rôle ARIA d'option.
-    const fresh = (broad) => optionNodes(broad).filter((el) => !optionsBefore.has(el));
-    const search = () =>
-      matchOption(fresh(false), action.value) ||
-      matchOption(fresh(true), action.value) ||
-      matchOption(optionNodes(false), action.value);
+      realClick(trigger);
+      await sleep(250);
 
-    let option = search();
+      const fresh = (broad) => optionNodes(broad).filter((el) => !optionsBefore.has(el));
+      const look = () => matchOption(fresh(false), action.value) || matchOption(fresh(true), action.value);
 
-    // Liste longue : on filtre par saisie avant de re-chercher.
-    if (!option) {
+      if (look()) return look();
+
+      // Liste longue : on filtre par saisie avant de re-chercher.
       const searchInput = [...document.querySelectorAll('input:not([type="hidden"])')]
         .find((i) => !inputsBefore.has(i) && isVisible(i))
         || (trigger.tagName === 'INPUT' ? trigger : null);
@@ -257,11 +253,20 @@
         setReactValue(searchInput, action.value);
         await sleep(350);
       }
-      option = await waitFor(search);
-    }
+      return waitFor(look);
+    };
+
+    // Si un menu était déjà ouvert, il figure dans la photo « avant » et le diff
+    // ne voit rien. Le premier clic l'a alors refermé : on retente, la seconde
+    // photo partant cette fois d'un état fermé.
+    const option = (await openAndFind()) || (await openAndFind());
 
     if (!option) {
-      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      // Escape ne referme un menu que s'il y en a un : sans menu ouvert, il
+      // risquerait de refermer l'éditeur d'appel et de perdre la saisie.
+      if (optionNodes(true).length > baseline) {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
       return { ok: false, why: `option introuvable : « ${action.value} » (${action.name})` };
     }
 
@@ -428,8 +433,10 @@
     lines.push(`Menus visibles (${triggers.length}) :`);
     triggers.slice(0, 25).forEach((t) => lines.push(`    ${describe(t)}`));
 
+    // Compte brut, hors diff : la page en porte des dizaines en permanence.
+    // Ce que le script retient réellement, ce sont les nouveaux après clic.
     const options = optionNodes(false);
-    lines.push(`Options actuellement ouvertes (${options.length}) :`);
+    lines.push(`Candidats « option » présents sur la page (${options.length}) :`);
     options.slice(0, 40).forEach((o) => lines.push(`    ${describe(o)}`));
 
     return lines.join('\n');

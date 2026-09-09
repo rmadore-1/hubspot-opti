@@ -11,6 +11,8 @@ const HTML = `<!doctype html><html><body>
   </nav>
   <div class="property-list">
     <span data-test-id="options_co_logiciel_ia">Options - co logiciel IA</span>
+    <span role="option">Call Commercial : prospection</span>
+    <span role="option">Répondeur/Pas de réponse</span>
   </div>
   <div class="editor">
     <div class="field">
@@ -48,7 +50,9 @@ window.Element.prototype.scrollIntoView = function () {};
 for (const [testId, values] of Object.entries(OPTIONS)) {
   const trigger = window.document.querySelector(`[data-test-id="${testId}"]`);
   trigger.addEventListener('mousedown', () => {
-    if (window.document.querySelector('[role="listbox"]')) return;
+    // Un vrai menu bascule : reclicher le déclencheur le referme.
+    const open = window.document.querySelector('[role="listbox"]');
+    if (open) { open.remove(); return; }
     const listbox = window.document.createElement('ul');
     listbox.setAttribute('role', 'listbox');
     for (const value of values) {
@@ -125,9 +129,9 @@ const probe = window.hsQuickCall.probeText();
 check('la sonde nomme les deux champs',
   probe.includes("Type d'appel") && probe.includes("Résultat de l'appel"));
 check('la sonde liste les menus détectés', /Menus visibles \(2\)/.test(probe));
-check('la sonde ne compte pas la navigation comme des options ouvertes',
-  /Options actuellement ouvertes \(0\)/.test(probe),
-  probe.split('\n').find((l) => l.startsWith('Options')));
+check('la sonde annonce les candidats bruts sans les confondre avec un menu ouvert',
+  /Candidats « option » présents sur la page \(2\)/.test(probe),
+  probe.split('\n').find((l) => l.startsWith('Candidats')));
 check('la sonde affiche la valeur actuelle du champ',
   probe.includes('valeur actuelle = "Call commercial: PROSPECTION"'));
 
@@ -136,14 +140,27 @@ const outcome = window.document.querySelector('[data-test-id="call-outcome-selec
 outcome.removeAttribute('data-selected');
 outcome.textContent = 'Sélectionner';
 const noise = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[1]);
-check('sélectionne la vraie option malgré un <li> de nav au texte identique',
+check('sélectionne la vraie option malgré des leurres au texte identique',
   noise.ok && outcome.dataset.selected === 'Répondeur/Pas de réponse',
   JSON.stringify(noise));
+check('ne clique pas le span [role=option] qui affiche la valeur courante',
+  window.document.querySelector('.property-list [role="option"]').isConnected);
 
 // 8. Champ déjà rempli : on ne rouvre pas le menu
 const already = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[1]);
 check('ne refait rien si la valeur est déjà bonne',
   already.ok && /déjà à la bonne valeur/.test(already.note || ''), JSON.stringify(already));
+
+// 9. Un menu resté ouvert ne bloque pas : le premier clic le referme, on retente
+const type = window.document.querySelector('[data-test-id="call-type-select"]');
+type.removeAttribute('data-selected');
+type.textContent = 'Sélectionner';
+type.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true })); // menu déjà ouvert
+check('un menu est bien ouvert avant l\'appel', !!window.document.querySelector('[role="listbox"]'));
+const reopened = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.actions[0]);
+check('se rattrape quand le menu était déjà ouvert',
+  reopened.ok && type.dataset.selected === 'Call commercial: PROSPECTION',
+  JSON.stringify(reopened));
 
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {
