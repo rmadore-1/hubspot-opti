@@ -204,6 +204,33 @@ const stored = JSON.parse(window.localStorage.getItem('hsQuickCall.presets.v1'))
 check('mémorise les combinaisons pour la prochaine visite',
   stored[0].hotkey.key === 'm' && stored[0].values["Type d'appel"], JSON.stringify(stored[0].hotkey));
 
+// 12. Visibilité des boutons : masqué par défaut sauf le premier
+const barButtons = () => [...window.document.getElementById('hs-quick-call-ui').children];
+check('la barre montre la combinaison visible et le bouton réglages',
+  barButtons().length === 2 && barButtons()[0].textContent === 'Répondeur / Prospection',
+  barButtons().map((b) => b.textContent).join(' | '));
+
+hs.presets.push({ id: 'second', label: 'Connecté / Relance', hotkey: null, visible: false, values: { "Type d'appel": 'Call Commercial : relance' } });
+hs.savePresets();
+check('une combinaison masquée n\'ajoute pas de bouton',
+  barButtons().length === 2, barButtons().map((b) => b.textContent).join(' | '));
+
+hs.setPresetVisible(hs.presets[1], true);
+check('l\'oeil fait apparaître son bouton',
+  barButtons().length === 3 && barButtons()[1].textContent === 'Connecté / Relance',
+  barButtons().map((b) => b.textContent).join(' | '));
+
+hs.setPresetVisible(hs.presets[0], false);
+check('l\'oeil retire le bouton sans supprimer la combinaison',
+  barButtons().length === 2 && hs.presets.length === 2,
+  barButtons().map((b) => b.textContent).join(' | '));
+
+check('les boutons sont atténués au repos',
+  barButtons().every((b) => Number(b.style.opacity) === hs.CONFIG.buttonOpacity),
+  barButtons().map((b) => b.style.opacity).join(' | '));
+barButtons()[0].dispatchEvent(new window.MouseEvent('mouseenter'));
+check('le survol les rend pleins', barButtons()[0].style.opacity === '1');
+
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.detail && !r.ok ? `  [${r.detail}]` : ''}`);

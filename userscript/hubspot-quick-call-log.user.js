@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HubSpot — Qualification rapide d'appel
 // @namespace    https://webdentiste.eu/
-// @version      2.0.0
+// @version      2.1.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -35,6 +35,7 @@
     defaultPresets: [{
       id: 'repondeur-prospection',
       label: 'Répondeur / Prospection',
+      visible: true,
       hotkey: { key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false },
       values: {
         "Type d'appel": 'Call Commercial : prospection',
@@ -46,6 +47,9 @@
     autoSave: false,
 
     showButtons: true,
+
+    // Opacité des boutons flottants au repos : présents sans capter le regard.
+    buttonOpacity: 0.72,
 
     // Attente max pour l'apparition d'un champ ou d'une option.
     timeoutMs: 4000,
@@ -367,6 +371,9 @@
       id: typeof id === 'string' ? id : uid(),
       label,
       hotkey: hotkey && typeof hotkey.key === 'string' ? hotkey : null,
+      // undefined est significatif ici : il distingue un enregistrement
+      // antérieur à la visibilité d'un choix explicite de masquage.
+      visible: typeof preset.visible === 'boolean' ? preset.visible : undefined,
       values,
     };
   }
@@ -376,7 +383,16 @@
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
       if (Array.isArray(stored)) {
         const clean = stored.map(sanitize).filter(Boolean);
-        if (clean.length) return clean;
+        if (clean.length) {
+          // Enregistrement d'avant la visibilité : on montre la première, on
+          // masque les autres, plutôt que de laisser une barre vide.
+          if (clean.every((p) => p.visible === undefined)) {
+            clean.forEach((p, i) => { p.visible = i === 0; });
+          } else {
+            clean.forEach((p) => { p.visible = p.visible === true; });
+          }
+          return clean;
+        }
       }
     } catch (_) { /* stockage bloqué ou illisible */ }
 
@@ -660,6 +676,15 @@
     return button;
   }
 
+  /** Boutons discrets au repos, pleins au survol. */
+  function dim(button) {
+    button.style.opacity = String(CONFIG.buttonOpacity);
+    button.style.transition = 'opacity .15s';
+    button.addEventListener('mouseenter', () => { button.style.opacity = '1'; });
+    button.addEventListener('mouseleave', () => { button.style.opacity = String(CONFIG.buttonOpacity); });
+    return button;
+  }
+
   let bar = null;
 
   function renderButtons() {
@@ -675,13 +700,13 @@
       document.body.appendChild(bar);
     }
     bar.textContent = '';
-    for (const preset of presets) {
-      bar.appendChild(makeButton(
+    for (const preset of presets.filter((p) => p.visible)) {
+      bar.appendChild(dim(makeButton(
         preset.label, ORANGE, () => trigger(preset),
         preset.hotkey ? `Raccourci : ${describeHotkey(preset.hotkey)}` : 'Aucun raccourci',
-      ));
+      )));
     }
-    bar.appendChild(makeButton('⚙️', SLATE, toggleSettings, 'Combinaisons'));
+    bar.appendChild(dim(makeButton('⚙️', SLATE, toggleSettings, 'Combinaisons')));
   }
 
   // ---------------------------------------------------------------------------
@@ -739,10 +764,11 @@
         id: uid(),
         label: Object.values(values).join(' / ') || 'Nouvelle combinaison',
         hotkey: null,
+        visible: false, // l'œil la fait apparaître en bas de page
         values,
       });
       savePresets();
-      toast('Combinaison ajoutée — donne-lui un raccourci', 'success');
+      toast('Combinaison ajoutée — donne-lui un raccourci, puis l\'œil pour l\'afficher', 'success');
     });
     Object.assign(add.style, { alignSelf: 'flex-start', marginTop: '4px' });
     settingsEl.appendChild(add);
@@ -802,6 +828,10 @@
       );
     }, 'Cliquer puis taper la combinaison');
 
+    const eye = makeSmallButton('👁', () => setPresetVisible(preset, !preset.visible),
+      'Afficher ou masquer son bouton en bas de page');
+    paintEye(eye, preset.visible);
+
     const absorb = makeSmallButton('Absorber', async () => {
       const current = await requestValues();
       if (!current) { toast('Aucun champ lisible — ouvre l\'éditeur d\'appel', 'error'); return; }
@@ -817,9 +847,19 @@
     });
     remove.style.color = COLORS.error;
 
-    actions.append(hotkeyBtn, absorb, remove);
+    actions.append(eye, hotkeyBtn, absorb, remove);
     row.append(name, values, actions);
     return row;
+  }
+
+  function paintEye(button, visible) {
+    button.style.opacity = visible ? '1' : '0.35';
+    button.style.borderColor = visible ? ORANGE : '#cbd6e2';
+  }
+
+  function setPresetVisible(preset, visible) {
+    preset.visible = visible;
+    savePresets();
   }
 
   function matchesHotkeyPair(a, b) {
@@ -952,7 +992,7 @@
   window.hsQuickCall = {
     probe, probeText, trigger, runPreset, selectValue, actionsFor, findTrigger,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
-    describeHotkey, matchesHotkey, savePresets,
+    describeHotkey, matchesHotkey, savePresets, setPresetVisible,
     get presets() { return presets; },
     CONFIG,
   };

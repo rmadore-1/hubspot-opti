@@ -55,7 +55,8 @@ Le `@match` couvre `app.hubspot.com`, `app-eu1.hubspot.com` et
 
 ### Utilisation
 
-En bas à droite : un bouton par **combinaison**, plus un bouton ⚙️.
+En bas à droite : un bouton par combinaison **affichée**, plus un bouton ⚙️. Les
+boutons sont atténués au repos et redeviennent pleins au survol.
 
 | Geste                  | Effet                                                |
 | ---------------------- | ---------------------------------------------------- |
@@ -71,6 +72,10 @@ l'appel`) et, facultativement, un raccourci. Celle livrée par défaut est
 
 Le panneau ⚙️ liste les combinaisons. Pour chacune :
 
+- **l'œil** — affiche ou masque son bouton en bas de page. Une combinaison
+  masquée reste pilotable par son raccourci : l'œil ne gouverne que la barre.
+  Seule la première est affichée au départ, les combinaisons créées ensuite
+  naissent masquées pour ne pas encombrer l'écran ;
 - **le nom**, éditable directement ;
 - **le bouton raccourci** — cliquer dessus met le bouton en écoute : les
   modificateurs s'affichent au fur et à mesure que tu les enfonces (`Ctrl+…`),
@@ -173,6 +178,7 @@ Tout est regroupé dans l'objet `CONFIG` en tête de fichier :
 | `defaultPresets` | Combinaisons livrées, utilisées au premier lancement            |
 | `autoSave`       | Clique *Enregistrer* après les actions. `false` par défaut      |
 | `showButtons`    | Affiche la barre de boutons                                     |
+| `buttonOpacity`  | Opacité des boutons au repos (`0.72`), pleine au survol         |
 | `timeoutMs`      | Attente max pour l'apparition d'un champ ou d'une option        |
 
 Au quotidien tu n'as plus à toucher au fichier : les combinaisons se gèrent
