@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HubSpot — Qualification rapide d'appel
 // @namespace    https://webdentiste.eu/
-// @version      0.5.0
+// @version      1.0.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot (type + résultat) en un raccourci clavier.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -44,12 +44,14 @@
     // À laisser sur false tant que tu valides le comportement.
     autoSave: false,
 
-    // Raccourcis. `key` est comparé en minuscule.
-    hotkey: { key: 'k', ctrlKey: true, shiftKey: true, altKey: false },
-    probeHotkey: { key: 'j', ctrlKey: true, shiftKey: true, altKey: false },
+    // Raccourci par défaut. Un clic droit sur le bouton le remplace, et le
+    // nouveau est mémorisé dans le navigateur. `key` est comparé en minuscule.
+    hotkey: { key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false },
+
 
     // Bouton flottant en bas à droite (frame principale uniquement).
     showButton: true,
+    buttonLabel: 'Répondeur / Prospection',
 
     // Délai max d'attente pour qu'un champ ou une option apparaisse.
     timeoutMs: 4000,
@@ -320,7 +322,7 @@
         return;
       }
       report(warnings.length ? 'error' : 'success',
-        warnings.length ? `À vérifier — ${warnings.join(' ; ')}` : 'Appel qualifié ✓');
+        warnings.length ? `À vérifier — ${warnings.join(' ; ')}` : 'Appel qualifié');
     } catch (err) {
       console.error('[hs-quick-call]', err);
       report('error', 'Erreur — voir la console');
@@ -388,6 +390,11 @@
       case 'probeReport':
         if (IS_TOP) probeReports.push(msg.text);
         break;
+
+      case 'hotkeyChanged':
+        hotkey = msg.hotkey;
+        refreshButtonTitle();
+        break;
     }
   });
 
@@ -402,7 +409,11 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Mode sonde — un rapport texte, collable tel quel
+  // Mode sonde — diagnostic, sans bouton ni raccourci
+  //
+  // Ne sert que le jour où le ciblage casse : hsQuickCall.probe() depuis la
+  // console imprime, frame par frame, les libellés candidats, le déclencheur
+  // retenu, sa valeur courante et les menus visibles.
   // ---------------------------------------------------------------------------
 
   function describe(el) {
@@ -493,18 +504,30 @@
     return button;
   }
 
+  let actionButton = null;
+
+  function refreshButtonTitle() {
+    if (actionButton) {
+      actionButton.title =
+        `Clic : qualifier l'appel (${describeHotkey(hotkey)})\nClic droit : changer le raccourci`;
+    }
+  }
+
   function mountButton() {
     if (!IS_TOP || !CONFIG.showButton) return;
     if (document.getElementById('hs-quick-call-ui')) return;
-    const bar = document.createElement('div');
-    bar.id = 'hs-quick-call-ui';
-    Object.assign(bar.style, {
+
+    actionButton = makeButton(CONFIG.buttonLabel, '#ff7a59', trigger);
+    actionButton.id = 'hs-quick-call-ui';
+    Object.assign(actionButton.style, {
       position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483646',
-      display: 'flex', gap: '8px', alignItems: 'center',
     });
-    bar.appendChild(makeButton("\u26a1 Qualifier l'appel", '#ff7a59', trigger));
-    bar.appendChild(makeButton('\ud83d\udd0d', '#516f90', probe, 'Sonder les champs (Ctrl+Shift+J)'));
-    document.body.appendChild(bar);
+    actionButton.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      captureHotkey();
+    });
+    refreshButtonTitle();
+    document.body.appendChild(actionButton);
   }
 
   // Le presse-papier via navigator.clipboard exige une activation utilisateur
@@ -548,9 +571,9 @@
       let ok = false;
       try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
       if (!ok && navigator.clipboard) {
-        navigator.clipboard.writeText(text).then(() => { copy.textContent = 'Copi\u00e9 \u2713'; }).catch(() => {});
+        navigator.clipboard.writeText(text).then(() => { copy.textContent = 'Copié'; }).catch(() => {});
       }
-      copy.textContent = ok ? 'Copi\u00e9 \u2713' : 'Fais Cmd+C';
+      copy.textContent = ok ? 'Copié' : 'Fais Cmd+C';
     });
     const close = makeButton('Fermer', '#7c98b6', () => { panelEl.remove(); panelEl = null; });
 
@@ -562,23 +585,102 @@
     area.select();
   }
 
-  function matchesHotkey(event, hotkey) {
+  // ---------------------------------------------------------------------------
+  // Raccourci : modifiable au clic droit, mémorisé par navigateur
+  // ---------------------------------------------------------------------------
+
+  const STORAGE_KEY = 'hsQuickCall.hotkey';
+
+  function loadHotkey() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      return stored && typeof stored.key === 'string' ? stored : null;
+    } catch (_) {
+      return null; // navigation privée, stockage bloqué
+    }
+  }
+
+  let hotkey = loadHotkey() || CONFIG.hotkey;
+
+  function describeHotkey(h) {
+    const parts = [];
+    if (h.ctrlKey) parts.push('Ctrl');
+    if (h.metaKey) parts.push('Cmd');
+    if (h.altKey) parts.push('Alt');
+    if (h.shiftKey) parts.push('Maj');
+    parts.push(h.key.length === 1 ? h.key.toUpperCase() : h.key);
+    return parts.join('+');
+  }
+
+  function matchesHotkey(event, h) {
     return (
-      event.key.toLowerCase() === hotkey.key &&
-      event.ctrlKey === !!hotkey.ctrlKey &&
-      event.shiftKey === !!hotkey.shiftKey &&
-      event.altKey === !!hotkey.altKey
+      event.key.toLowerCase() === h.key &&
+      event.ctrlKey === !!h.ctrlKey &&
+      event.shiftKey === !!h.shiftKey &&
+      event.altKey === !!h.altKey &&
+      event.metaKey === !!h.metaKey
     );
+  }
+
+  let capturing = null;
+
+  /** Attend la prochaine combinaison et l'enregistre. */
+  function captureHotkey() {
+    if (capturing) return;
+    toast('Appuie sur la nouvelle combinaison (Échap pour annuler)', 'pending');
+
+    const stop = () => {
+      document.removeEventListener('keydown', onKey, true);
+      capturing = null;
+    };
+
+    const onKey = (event) => {
+      // On ignore les modificateurs seuls : on attend la vraie touche.
+      if (['Control', 'Shift', 'Alt', 'Meta'].includes(event.key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === 'Escape') {
+        stop();
+        toast(`Raccourci inchangé (${describeHotkey(hotkey)})`, 'pending');
+        return;
+      }
+
+      const next = {
+        key: event.key.toLowerCase(),
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey,
+      };
+      // Une touche nue serait déclenchée en tapant dans une note : on l'écarte.
+      if (!next.ctrlKey && !next.altKey && !next.metaKey) {
+        toast('Ajoute au moins Ctrl, Alt ou Cmd — sinon tu le déclencherais en tapant', 'error');
+        return;
+      }
+
+      setHotkey(next);
+      stop();
+      toast(`Raccourci : ${describeHotkey(next)}`, 'success');
+    };
+
+    capturing = onKey;
+    document.addEventListener('keydown', onKey, true);
+  }
+
+  function setHotkey(next) {
+    hotkey = next;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch (_) { /* stockage bloqué */ }
+    refreshButtonTitle();
+    // Les iframes écoutent aussi le clavier : elles doivent connaître le nouveau.
+    broadcast({ type: 'hotkeyChanged', hotkey: next });
   }
 
   // Écouté dans chaque frame : le focus clavier peut être dans le widget d'appel.
   document.addEventListener('keydown', (event) => {
-    if (matchesHotkey(event, CONFIG.hotkey)) {
+    if (matchesHotkey(event, hotkey)) {
       event.preventDefault();
-      IS_TOP ? trigger() : toTop({ type: 'hotkey', which: 'run' });
-    } else if (matchesHotkey(event, CONFIG.probeHotkey)) {
-      event.preventDefault();
-      IS_TOP ? probe() : toTop({ type: 'hotkey', which: 'probe' });
+      IS_TOP ? trigger() : toTop({ type: 'hotkey' });
     }
   }, true);
 
@@ -586,7 +688,7 @@
   if (IS_TOP) {
     window.addEventListener('message', (event) => {
       const msg = event.data && event.data.__hsQuickCall;
-      if (msg && msg.type === 'hotkey') (msg.which === 'probe' ? probe : trigger)();
+      if (msg && msg.type === 'hotkey') trigger();
     });
   }
 
@@ -595,7 +697,12 @@
   mountButton();
 
   // Accès manuel depuis la console, frame par frame.
-  window.hsQuickCall = { run, probe, probeText, trigger, selectValue, findTrigger, optionNodes, readValue, hasAllFields, CONFIG };
+  window.hsQuickCall = {
+    run, probe, probeText, trigger, selectValue, findTrigger, optionNodes, readValue,
+    hasAllFields, captureHotkey, describeHotkey, matchesHotkey,
+    get hotkey() { return hotkey; },
+    CONFIG,
+  };
 
-  console.info(`[hs-quick-call] chargé (frame ${FRAME}) — Ctrl+Shift+K qualifier, Ctrl+Shift+J sonder`);
+  console.info(`[hs-quick-call] chargé (frame ${FRAME}) — ${describeHotkey(hotkey)} pour qualifier, hsQuickCall.probe() pour diagnostiquer`);
 })();

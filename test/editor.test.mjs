@@ -36,7 +36,12 @@ const OPTIONS = {
   'call-outcome-select': ['Connecté', 'Répondeur/Pas de réponse', 'Numéro erroné', 'Occupé'],
 };
 
-const dom = new JSDOM(HTML, { runScripts: 'outside-only', pretendToBeVisual: true });
+const dom = new JSDOM(HTML, {
+  runScripts: 'outside-only',
+  pretendToBeVisual: true,
+  // localStorage exige une origine : sans url, jsdom ne l'expose pas.
+  url: 'https://app-eu1.hubspot.com/contacts/145766737/record/0-1/828923682002',
+});
 const { window } = dom;
 
 // jsdom ne fait pas de layout : on rend tout "visible" sauf display:none.
@@ -161,6 +166,31 @@ const reopened = await window.hsQuickCall.selectValue(window.hsQuickCall.CONFIG.
 check('se rattrape quand le menu était déjà ouvert',
   reopened.ok && type.dataset.selected === 'Call commercial: PROSPECTION',
   JSON.stringify(reopened));
+
+// 10. Raccourci : lecture, correspondance stricte, capture au clic droit
+const hs = window.hsQuickCall;
+check('décrit le raccourci lisiblement',
+  hs.describeHotkey({ key: 'k', ctrlKey: true, shiftKey: true }) === 'Ctrl+Maj+K',
+  hs.describeHotkey({ key: 'k', ctrlKey: true, shiftKey: true }));
+check('ne matche pas si un modificateur diffère',
+  !hs.matchesHotkey({ key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: true },
+    { key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false }));
+
+const press = (init) => window.document.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, ...init }));
+
+hs.captureHotkey();
+press({ key: 'p' }); // touche nue : refusée, on déclencherait en tapant une note
+check('refuse une touche sans modificateur', hs.hotkey.key === 'k', JSON.stringify(hs.hotkey));
+
+press({ key: 'M', ctrlKey: true, altKey: true });
+check('enregistre la nouvelle combinaison',
+  hs.hotkey.key === 'm' && hs.hotkey.ctrlKey && hs.hotkey.altKey, JSON.stringify(hs.hotkey));
+check('mémorise le raccourci pour la prochaine visite',
+  JSON.parse(window.localStorage.getItem('hsQuickCall.hotkey')).key === 'm');
+
+hs.captureHotkey();
+press({ key: 'Escape' });
+check('Échap laisse le raccourci inchangé', hs.hotkey.key === 'm');
 
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {

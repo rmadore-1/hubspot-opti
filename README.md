@@ -52,16 +52,21 @@ Le `@match` couvre `app.hubspot.com`, `app-eu1.hubspot.com` et
 
 ### Utilisation
 
-| Raccourci / bouton      | Effet                                            |
-| ----------------------- | ------------------------------------------------ |
-| `Ctrl+Shift+K`          | Joue les actions sur l'appel ouvert               |
-| `Ctrl+Shift+J`          | **Mode sonde** — ouvre le rapport de détection    |
-| ⚡ Qualifier l'appel     | Idem `Ctrl+Shift+K`                               |
-| 🔍                      | Idem `Ctrl+Shift+J`                               |
+Un seul bouton, **Répondeur / Prospection**, en bas à droite :
 
-Les raccourcis utilisent `Ctrl`, y compris sur macOS : `Cmd+Shift+J` et
-`Cmd+Shift+K` sont déjà pris par les consoles de Firefox. Les deux boutons
-flottants évitent le clavier si tu préfères.
+| Geste                  | Effet                                                |
+| ---------------------- | ---------------------------------------------------- |
+| Clic gauche            | Joue les actions sur l'appel ouvert                   |
+| Clic droit             | Change le raccourci clavier                           |
+| `Ctrl+Maj+K` (défaut)  | Idem clic gauche                                      |
+
+Le clic droit attend la prochaine combinaison et la mémorise dans le navigateur
+(`localStorage`), donc elle survit aux rechargements. `Échap` annule. Une touche
+nue est refusée : sans modificateur, tu la déclencherais en tapant une note.
+
+Le raccourci par défaut utilise `Ctrl`, y compris sur macOS — `Cmd+Maj+K` est
+déjà pris par la console de Firefox. Si tu en choisis un autre, le survol du
+bouton rappelle lequel est actif.
 
 L'éditeur d'appel doit être ouvert (appel sélectionné et déplié dans la
 chronologie) avant de déclencher le raccourci.
@@ -101,7 +106,7 @@ Les sélecteurs sont volontairement **basés sur les libellés visibles** plutô
 sur les classes CSS (obfusquées et instables chez HubSpot). Si un champ n'est pas
 trouvé :
 
-1. Ouvrir l'éditeur d'appel, presser `Ctrl+Shift+J`.
+1. Ouvrir l'éditeur d'appel, puis dans la console : `hsQuickCall.probe()`.
 2. La sonde interroge toutes les frames et ouvre un **panneau avec le rapport
    déjà sélectionné** — `Cmd+C` suffit. Il liste, frame par frame : les
    libellés candidats, le déclencheur retenu pour chaque action, tous les menus
@@ -121,6 +126,10 @@ Le rapport est aussi imprimé dans la console et disponible dans
 La comparaison ignore la casse, les accents et les espaces autour des `:`, donc
 `Call commercial: Prospection` matche `Call Commercial : prospection`.
 
+La sonde n'a volontairement ni bouton ni raccourci : c'est un outil de
+diagnostic, pas un geste quotidien. Elle reste appelable à tout moment par
+`hsQuickCall.probe()`.
+
 Pour tester une action isolément depuis la console :
 
 ```js
@@ -137,8 +146,8 @@ Tout est regroupé dans l'objet `CONFIG` en tête de fichier :
 | ------------- | ----------------------------------------------------------------- |
 | `actions`     | Liste ordonnée `{ name, field[], value }`                          |
 | `autoSave`    | Clique *Enregistrer* après les actions. `false` par défaut         |
-| `hotkey`      | Raccourci de déclenchement                                         |
-| `probeHotkey` | Raccourci du mode sonde                                            |
+| `hotkey`      | Raccourci **par défaut** — le clic droit le remplace durablement   |
+| `buttonLabel` | Texte du bouton                                                    |
 | `showButton`  | Affiche le bouton flottant                                         |
 | `timeoutMs`   | Attente max pour l'apparition d'un champ ou d'une option           |
 
