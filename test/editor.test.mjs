@@ -231,6 +231,28 @@ check('les boutons sont atténués au repos',
 barButtons()[0].dispatchEvent(new window.MouseEvent('mouseenter'));
 check('le survol les rend pleins', barButtons()[0].style.opacity === '1');
 
+// 13. L'oeil est un tracé, pas un emoji : aucune dépendance à la police
+hs.toggleSettings();
+const eyes = () => [...window.document.querySelectorAll('[title^="Afficher ou masquer"]')];
+check('le panneau expose un oeil par combinaison', eyes().length === hs.presets.length,
+  String(eyes().length));
+check('l\'oeil est dessiné en SVG et non écrit en texte',
+  eyes().every((b) => b.querySelector('svg') && !b.textContent.trim()),
+  eyes().map((b) => JSON.stringify(b.textContent)).join(' | '));
+
+// presets[0] est masqué, presets[1] visible depuis les tests précédents
+const pathCount = (b) => b.querySelectorAll('path').length;
+check('l\'oeil barré porte un trait de plus que l\'oeil ouvert',
+  pathCount(eyes()[0]) === pathCount(eyes()[1]) + 1,
+  `${pathCount(eyes()[0])} vs ${pathCount(eyes()[1])}`);
+
+eyes()[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+check('cliquer l\'oeil rétablit le bouton et l\'icône ouverte',
+  hs.presets[0].visible && pathCount(eyes()[0]) === 2 && barButtons().length === 3,
+  `${hs.presets[0].visible} / ${pathCount(eyes()[0])} / ${barButtons().length}`);
+
+check('les boutons sont un peu moins transparents', hs.CONFIG.buttonOpacity >= 0.85);
+
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.detail && !r.ok ? `  [${r.detail}]` : ''}`);

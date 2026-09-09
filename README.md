@@ -72,7 +72,9 @@ l'appel`) et, facultativement, un raccourci. Celle livrée par défaut est
 
 Le panneau ⚙️ liste les combinaisons. Pour chacune :
 
-- **l'œil** — affiche ou masque son bouton en bas de page. Une combinaison
+- **l'œil** (dessiné en SVG, pas en emoji — `U+1F441` manque à beaucoup de
+  polices système et s'y affiche en carré vide) — affiche ou masque son bouton
+  en bas de page. Une combinaison
   masquée reste pilotable par son raccourci : l'œil ne gouverne que la barre.
   Seule la première est affichée au départ, les combinaisons créées ensuite
   naissent masquées pour ne pas encombrer l'écran ;
@@ -178,7 +180,7 @@ Tout est regroupé dans l'objet `CONFIG` en tête de fichier :
 | `defaultPresets` | Combinaisons livrées, utilisées au premier lancement            |
 | `autoSave`       | Clique *Enregistrer* après les actions. `false` par défaut      |
 | `showButtons`    | Affiche la barre de boutons                                     |
-| `buttonOpacity`  | Opacité des boutons au repos (`0.72`), pleine au survol         |
+| `buttonOpacity`  | Opacité des boutons au repos (`0.9`), pleine au survol          |
 | `timeoutMs`      | Attente max pour l'apparition d'un champ ou d'une option        |
 
 Au quotidien tu n'as plus à toucher au fichier : les combinaisons se gèrent

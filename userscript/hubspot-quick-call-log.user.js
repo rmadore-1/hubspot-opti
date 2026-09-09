@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HubSpot — Qualification rapide d'appel
 // @namespace    https://webdentiste.eu/
-// @version      2.1.0
+// @version      2.2.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -49,7 +49,7 @@
     showButtons: true,
 
     // Opacité des boutons flottants au repos : présents sans capter le regard.
-    buttonOpacity: 0.72,
+    buttonOpacity: 0.9,
 
     // Attente max pour l'apparition d'un champ ou d'une option.
     timeoutMs: 4000,
@@ -663,6 +663,35 @@
     return button;
   }
 
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  // Emoji écarté : U+1F441 (œil) n'existe pas dans toutes les polices système et
+  // s'affiche alors en carré vide. Un tracé ne dépend d'aucune police.
+  const EYE = [
+    'M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z',
+    'M10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0',
+  ];
+  const EYE_OFF = EYE.concat('M2.5 13.5 13.5 2.5');
+
+  /** Construit l'icône par DOM plutôt que par innerHTML (Trusted Types). */
+  function svgIcon(paths) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.4');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    for (const d of paths) {
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    }
+    return svg;
+  }
+
   function makeSmallButton(label, onClick, title) {
     const button = document.createElement('button');
     button.textContent = label;
@@ -828,8 +857,9 @@
       );
     }, 'Cliquer puis taper la combinaison');
 
-    const eye = makeSmallButton('👁', () => setPresetVisible(preset, !preset.visible),
+    const eye = makeSmallButton('', () => setPresetVisible(preset, !preset.visible),
       'Afficher ou masquer son bouton en bas de page');
+    Object.assign(eye.style, { display: 'flex', alignItems: 'center', padding: '5px 8px' });
     paintEye(eye, preset.visible);
 
     const absorb = makeSmallButton('Absorber', async () => {
@@ -853,7 +883,9 @@
   }
 
   function paintEye(button, visible) {
-    button.style.opacity = visible ? '1' : '0.35';
+    button.textContent = '';
+    button.appendChild(svgIcon(visible ? EYE : EYE_OFF));
+    button.style.color = visible ? ORANGE : '#7c98b6';
     button.style.borderColor = visible ? ORANGE : '#cbd6e2';
   }
 
@@ -992,7 +1024,7 @@
   window.hsQuickCall = {
     probe, probeText, trigger, runPreset, selectValue, actionsFor, findTrigger,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
-    describeHotkey, matchesHotkey, savePresets, setPresetVisible,
+    describeHotkey, matchesHotkey, savePresets, setPresetVisible, toggleSettings,
     get presets() { return presets; },
     CONFIG,
   };
