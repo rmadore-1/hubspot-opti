@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom';
 import fs from 'fs';
 
-const script = fs.readFileSync(new URL('../userscript/hubspot-quick-call-log.user.js', import.meta.url), 'utf8');
+const script = fs.readFileSync(new URL('../userscript/lazyq.user.js', import.meta.url), 'utf8');
 
 // Approximation de l'éditeur d'appel HubSpot : libellé + bouton déclencheur,
 // menu rendu dans un portail attaché au body. On reproduit aussi le bruit
@@ -82,7 +82,7 @@ window.document.addEventListener('keydown', (event) => {
 
 window.eval(script);
 
-const hs = window.hsQuickCall;
+const hs = window.lazyQ;
 const results = [];
 const check = (name, condition, detail = '') => results.push({ name, ok: !!condition, detail });
 const el = (testId) => window.document.querySelector(`[data-test-id="${testId}"]`);
@@ -200,12 +200,12 @@ check('Échap annule sans rien changer', done === null, JSON.stringify(done));
 // 11. Persistance des combinaisons
 hs.presets[0].hotkey = { key: 'm', ctrlKey: true, shiftKey: false, altKey: true, metaKey: false };
 hs.savePresets();
-const stored = JSON.parse(window.localStorage.getItem('hsQuickCall.presets.v1'));
+const stored = JSON.parse(window.localStorage.getItem('lazyQ.presets.v1'));
 check('mémorise les combinaisons pour la prochaine visite',
   stored[0].hotkey.key === 'm' && stored[0].values["Type d'appel"], JSON.stringify(stored[0].hotkey));
 
 // 12. Visibilité des boutons : masqué par défaut sauf le premier
-const barButtons = () => [...window.document.getElementById('hs-quick-call-ui').children];
+const barButtons = () => [...window.document.getElementById('lazyq-bar').children];
 check('la barre montre la combinaison visible et le bouton réglages',
   barButtons().length === 2 && barButtons()[0].textContent === 'Répondeur / Prospection',
   barButtons().map((b) => b.textContent).join(' | '));

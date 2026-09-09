@@ -1,11 +1,14 @@
 {
-  "name": "hubspot-opti",
+  "name": "lazyq",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/editor.test.mjs"
+    "build": "node scripts/build-extension.mjs",
+    "icons": "python3 scripts/make-icons.py",
+    "test": "node test/editor.test.mjs && node test/migration.test.mjs && node test/extension.test.mjs"
   },
   "devDependencies": {
     "jsdom": "^26.0.0"
-  }
+  },
+  "version": "2.3.0"
 }

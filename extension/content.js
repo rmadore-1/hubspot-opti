@@ -1,14 +1,5 @@
-// ==UserScript==
-// @name         HubSpot — Qualification rapide d'appel
-// @namespace    https://webdentiste.eu/
-// @version      2.2.0
-// @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
-// @match        https://app.hubspot.com/*
-// @match        https://app-eu1.hubspot.com/*
-// @match        https://app-na1.hubspot.com/*
-// @run-at       document-idle
-// @grant        none
-// ==/UserScript==
+// Généré par scripts/build-extension.mjs — ne pas modifier à la main.
+// Source : userscript/lazyq.user.js (v2.3.0)
 
 // L'app HubSpot est un assemblage d'iframes : la fiche contact et le widget
 // d'appel (/calling/.../twilio) sont des documents distincts. Le script est
@@ -60,7 +51,10 @@
 
   const IS_TOP = window.top === window;
   const FRAME = IS_TOP ? 'principale' : location.pathname;
-  const STORAGE_KEY = 'hsQuickCall.presets.v1';
+  const STORAGE_KEY = 'lazyQ.presets.v1';
+  // Clés des versions antérieures au nom LazyQ, relues une fois pour ne pas
+  // faire perdre à l'utilisateur ses combinaisons et son raccourci.
+  const LEGACY_PRESETS_KEY = 'hsQuickCall.presets.v1';
   const LEGACY_HOTKEY_KEY = 'hsQuickCall.hotkey';
 
   // ---------------------------------------------------------------------------
@@ -338,12 +332,12 @@
         report('pending', `… ${action.name}`);
         const result = await selectValue(action);
         if (!result.ok) {
-          console.warn('[hs-quick-call]', result.why);
+          console.warn('[LazyQ]', result.why);
           report('error', `Échec — ${result.why}`);
           return;
         }
-        if (result.why) { console.warn('[hs-quick-call]', result.why); warnings.push(result.why); }
-        if (result.note) console.info('[hs-quick-call]', result.note);
+        if (result.why) { console.warn('[LazyQ]', result.why); warnings.push(result.why); }
+        if (result.note) console.info('[LazyQ]', result.note);
       }
       if (CONFIG.autoSave && !(await save())) {
         report('error', 'Champs remplis, mais bouton Enregistrer introuvable');
@@ -352,7 +346,7 @@
       report(warnings.length ? 'error' : 'success',
         warnings.length ? `À vérifier — ${warnings.join(' ; ')}` : `${preset.label} appliqué`);
     } catch (err) {
-      console.error('[hs-quick-call]', err);
+      console.error('[LazyQ]', err);
       report('error', 'Erreur — voir la console');
     } finally {
       running = false;
@@ -378,9 +372,13 @@
     };
   }
 
+  function readStored(key) {
+    try { return JSON.parse(localStorage.getItem(key)); } catch (_) { return null; }
+  }
+
   function loadPresets() {
     try {
-      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      const stored = readStored(STORAGE_KEY) || readStored(LEGACY_PRESETS_KEY);
       if (Array.isArray(stored)) {
         const clean = stored.map(sanitize).filter(Boolean);
         if (clean.length) {
@@ -396,13 +394,11 @@
       }
     } catch (_) { /* stockage bloqué ou illisible */ }
 
-    // Reprise du raccourci unique des versions précédentes.
-    const presets = JSON.parse(JSON.stringify(CONFIG.defaultPresets));
-    try {
-      const legacy = JSON.parse(localStorage.getItem(LEGACY_HOTKEY_KEY));
-      if (legacy && typeof legacy.key === 'string') presets[0].hotkey = legacy;
-    } catch (_) { /* rien à reprendre */ }
-    return presets;
+    // Reprise du raccourci unique des versions à combinaison unique.
+    const fresh = JSON.parse(JSON.stringify(CONFIG.defaultPresets));
+    const legacy = readStored(LEGACY_HOTKEY_KEY);
+    if (legacy && typeof legacy.key === 'string') fresh[0].hotkey = legacy;
+    return fresh;
   }
 
   let presets = loadPresets();
@@ -425,7 +421,7 @@
     (function walk(win) {
       if (!win || seen.has(win)) return;
       seen.add(win);
-      try { win.postMessage({ __hsQuickCall: payload }, '*'); } catch (_) { /* cross-origin */ }
+      try { win.postMessage({ __lazyQ: payload }, '*'); } catch (_) { /* cross-origin */ }
       let count = 0;
       try { count = win.frames.length; } catch (_) { return; }
       for (let i = 0; i < count; i += 1) {
@@ -435,7 +431,7 @@
   }
 
   function toTop(payload) {
-    try { window.top.postMessage({ __hsQuickCall: payload }, '*'); } catch (_) { /* ignore */ }
+    try { window.top.postMessage({ __lazyQ: payload }, '*'); } catch (_) { /* ignore */ }
   }
 
   function report(kind, text) {
@@ -447,7 +443,7 @@
   const pendingAbsorb = new Map();
 
   window.addEventListener('message', (event) => {
-    const msg = event.data && event.data.__hsQuickCall;
+    const msg = event.data && event.data.__lazyQ;
     if (!msg || typeof msg !== 'object') return;
 
     switch (msg.type) {
@@ -720,7 +716,7 @@
     if (!IS_TOP || !CONFIG.showButtons) return;
     if (!bar) {
       bar = document.createElement('div');
-      bar.id = 'hs-quick-call-ui';
+      bar.id = 'lazyq-bar';
       Object.assign(bar.style, {
         position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483646',
         display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap',
@@ -903,7 +899,7 @@
   // ---------------------------------------------------------------------------
   // Mode sonde — diagnostic, sans bouton ni raccourci
   //
-  // Ne sert que le jour où le ciblage casse : hsQuickCall.probe() depuis la
+  // Ne sert que le jour où le ciblage casse : lazyQ.probe() depuis la
   // console imprime, frame par frame, les libellés candidats, le déclencheur
   // retenu, sa valeur courante et les menus visibles.
   // ---------------------------------------------------------------------------
@@ -950,8 +946,8 @@
     broadcast({ type: 'probe' });
     setTimeout(() => {
       const text = probeReports.join('\n\n') || "(aucune frame n'a répondu)";
-      window.__hsProbe = text;
-      console.log('[hs-quick-call] SONDE\n' + text);
+      window.__lazyQProbe = text;
+      console.log('[LazyQ] SONDE\n' + text);
       showReport(text);
     }, 800);
   }
@@ -1021,7 +1017,7 @@
 
   if (IS_TOP) renderButtons(); else toTop({ type: 'needPresets' });
 
-  window.hsQuickCall = {
+  window.lazyQ = {
     probe, probeText, trigger, runPreset, selectValue, actionsFor, findTrigger,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
     describeHotkey, matchesHotkey, savePresets, setPresetVisible, toggleSettings,
@@ -1029,5 +1025,5 @@
     CONFIG,
   };
 
-  console.info(`[hs-quick-call] chargé (frame ${FRAME}) — ${presets.length} combinaison(s), hsQuickCall.probe() pour diagnostiquer`);
+  console.info(`[LazyQ] chargé (frame ${FRAME}) — ${presets.length} combinaison(s), lazyQ.probe() pour diagnostiquer`);
 })();
