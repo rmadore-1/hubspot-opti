@@ -52,11 +52,16 @@ Le `@match` couvre `app.hubspot.com`, `app-eu1.hubspot.com` et
 
 ### Utilisation
 
-| Raccourci      | Effet                                                     |
-| -------------- | --------------------------------------------------------- |
-| `Ctrl+Shift+K` | Joue les actions sur l'appel ouvert                        |
-| `Ctrl+Shift+J` | **Mode sonde** — dump les champs détectés dans la console  |
-| Bouton flottant| Même effet que `Ctrl+Shift+K`, pratique pour les tests     |
+| Raccourci / bouton      | Effet                                            |
+| ----------------------- | ------------------------------------------------ |
+| `Ctrl+Shift+K`          | Joue les actions sur l'appel ouvert               |
+| `Ctrl+Shift+J`          | **Mode sonde** — ouvre le rapport de détection    |
+| ⚡ Qualifier l'appel     | Idem `Ctrl+Shift+K`                               |
+| 🔍                      | Idem `Ctrl+Shift+J`                               |
+
+Les raccourcis utilisent `Ctrl`, y compris sur macOS : `Cmd+Shift+J` et
+`Cmd+Shift+K` sont déjà pris par les consoles de Firefox. Les deux boutons
+flottants évitent le clavier si tu préfères.
 
 L'éditeur d'appel doit être ouvert (appel sélectionné et déplié dans la
 chronologie) avant de déclencher le raccourci.
@@ -71,15 +76,21 @@ sur les classes CSS (obfusquées et instables chez HubSpot). Si un champ n'est p
 trouvé :
 
 1. Ouvrir l'éditeur d'appel, presser `Ctrl+Shift+J`.
-2. La sonde interroge toutes les frames, imprime un rapport texte dans la
-   console et **le copie dans le presse-papier**. Il liste, frame par frame :
-   les libellés candidats, le déclencheur retenu pour chaque action, tous les
-   menus visibles avec leurs `data-test-id`, et les options ouvertes.
+2. La sonde interroge toutes les frames et ouvre un **panneau avec le rapport
+   déjà sélectionné** — `Cmd+C` suffit. Il liste, frame par frame : les
+   libellés candidats, le déclencheur retenu pour chaque action, tous les menus
+   visibles avec leurs `data-test-id`, et les options ouvertes.
+
+   Le rapport n'est délibérément pas copié automatiquement :
+   `navigator.clipboard` exige une activation utilisateur transitoire, or la
+   collecte inter-frames est asynchrone — au moment de copier, le geste a
+   expiré et l'appel est rejeté. Le bouton *Copier* du panneau, lui, s'exécute
+   dans un vrai handler de clic et fonctionne.
 3. Ajuster `CONFIG.actions[].field` avec le libellé réellement affiché, ou
    `CONFIG.actions[].value` avec l'intitulé exact de l'option.
 
-Le rapport est aussi disponible dans `window.__hsProbe` si la copie automatique
-est bloquée.
+Le rapport est aussi imprimé dans la console et disponible dans
+`window.__hsProbe`.
 
 La comparaison ignore la casse, les accents et les espaces autour des `:`, donc
 `Call commercial: Prospection` matche `Call Commercial : prospection`.

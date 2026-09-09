@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HubSpot — Qualification rapide d'appel
 // @namespace    https://webdentiste.eu/
-// @version      0.2.0
+// @version      0.3.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot (type + résultat) en un raccourci clavier.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -396,18 +396,15 @@
     return lines.join('\n');
   }
 
-  /** Collecte les rapports de toutes les frames et les imprime en un bloc. */
+  /** Collecte les rapports de toutes les frames et les affiche. */
   function probe() {
     probeReports = [];
     broadcast({ type: 'probe' });
     setTimeout(() => {
-      const text = probeReports.join('\n\n') || '(aucune frame n\'a répondu)';
-      console.log('%c[hs-quick-call] SONDE — copie tout le bloc ci-dessous', 'font-weight:bold');
-      console.log(text);
+      const text = probeReports.join('\n\n') || "(aucune frame n'a répondu)";
       window.__hsProbe = text;
-      navigator.clipboard?.writeText(text)
-        .then(() => toast('Sonde copiée dans le presse-papier', 'success'))
-        .catch(() => toast('Sonde dans la console (window.__hsProbe)', 'success'));
+      console.log('[hs-quick-call] SONDE\n' + text);
+      showReport(text);
     }, 800);
   }
 
@@ -437,20 +434,86 @@
     toastEl._timer = setTimeout(() => { toastEl.style.opacity = '0'; }, 4000);
   }
 
-  function mountButton() {
-    if (!IS_TOP || !CONFIG.showButton) return;
-    if (document.getElementById('hs-quick-call-btn')) return;
+  function makeButton(label, background, onClick, title) {
     const button = document.createElement('button');
-    button.id = 'hs-quick-call-btn';
-    button.textContent = "⚡ Qualifier l'appel";
+    button.textContent = label;
+    if (title) button.title = title;
     Object.assign(button.style, {
-      position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483646',
       padding: '10px 16px', borderRadius: '24px', border: 'none', cursor: 'pointer',
-      background: '#ff7a59', color: '#fff', font: '600 13px/1 system-ui, sans-serif',
+      background, color: '#fff', font: '600 13px/1 system-ui, sans-serif',
       boxShadow: '0 2px 12px rgba(0,0,0,.25)',
     });
-    button.addEventListener('click', trigger);
-    document.body.appendChild(button);
+    button.addEventListener('click', onClick);
+    return button;
+  }
+
+  function mountButton() {
+    if (!IS_TOP || !CONFIG.showButton) return;
+    if (document.getElementById('hs-quick-call-ui')) return;
+    const bar = document.createElement('div');
+    bar.id = 'hs-quick-call-ui';
+    Object.assign(bar.style, {
+      position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483646',
+      display: 'flex', gap: '8px', alignItems: 'center',
+    });
+    bar.appendChild(makeButton("\u26a1 Qualifier l'appel", '#ff7a59', trigger));
+    bar.appendChild(makeButton('\ud83d\udd0d', '#516f90', probe, 'Sonder les champs (Ctrl+Shift+J)'));
+    document.body.appendChild(bar);
+  }
+
+  // Le presse-papier via navigator.clipboard exige une activation utilisateur
+  // transitoire : la sonde collecte les frames de façon asynchrone, donc au
+  // moment de copier le geste a expiré et l'appel est rejeté. On affiche donc
+  // le rapport déjà sélectionné — Cmd+C / Ctrl+C suffit.
+  let panelEl = null;
+
+  function showReport(text) {
+    if (!IS_TOP) return;
+    if (panelEl) panelEl.remove();
+
+    panelEl = document.createElement('div');
+    Object.assign(panelEl.style, {
+      position: 'fixed', bottom: '76px', right: '20px', zIndex: '2147483647',
+      width: 'min(560px, 90vw)', background: '#fff', borderRadius: '8px',
+      border: '1px solid #cbd6e2', boxShadow: '0 4px 24px rgba(0,0,0,.25)',
+      padding: '12px', font: '13px/1.4 system-ui, sans-serif', color: '#33475b',
+      display: 'flex', flexDirection: 'column', gap: '8px',
+    });
+
+    const title = document.createElement('strong');
+    title.textContent = 'Sonde — tout est sélectionné, Cmd+C pour copier';
+
+    const area = document.createElement('textarea');
+    area.readOnly = true;
+    area.value = text;
+    Object.assign(area.style, {
+      width: '100%', height: '320px', resize: 'vertical', boxSizing: 'border-box',
+      font: '12px/1.4 ui-monospace, Menlo, monospace', padding: '8px',
+      border: '1px solid #cbd6e2', borderRadius: '4px', background: '#f5f8fa',
+    });
+
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', gap: '8px' });
+
+    // Dans un handler de clic l'activation est fraîche : les deux voies marchent.
+    const copy = makeButton('Copier', '#00a4bd', () => {
+      area.focus();
+      area.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      if (!ok && navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => { copy.textContent = 'Copi\u00e9 \u2713'; }).catch(() => {});
+      }
+      copy.textContent = ok ? 'Copi\u00e9 \u2713' : 'Fais Cmd+C';
+    });
+    const close = makeButton('Fermer', '#7c98b6', () => { panelEl.remove(); panelEl = null; });
+
+    row.append(copy, close);
+    panelEl.append(title, area, row);
+    document.body.appendChild(panelEl);
+
+    area.focus();
+    area.select();
   }
 
   function matchesHotkey(event, hotkey) {
