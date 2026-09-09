@@ -1,7 +1,7 @@
 // L'extension est générée depuis le userscript : ce test garantit qu'un
 // changement du userscript non rebuildé ne passe pas inaperçu.
 import fs from 'fs';
-import { SOURCE, CONTENT, MANIFEST, buildContent, manifestText, buildManifest, readVersion } from '../scripts/build-extension.mjs';
+import { SOURCE, CONTENT, MANIFEST, DOC, DOC_TEMPLATE, ICON, buildContent, buildDoc, manifestText, buildManifest, readVersion } from '../scripts/build-extension.mjs';
 
 const results = [];
 const check = (name, condition, detail = '') => results.push({ name, ok: !!condition, detail });
@@ -15,6 +15,19 @@ check('extension/content.js est à jour',
 check('extension/manifest.json est à jour',
   fs.readFileSync(MANIFEST, 'utf8') === manifestText(source),
   'lance `npm run build`');
+
+const doc = fs.readFileSync(DOC, 'utf8');
+check('docs/installation.html est à jour',
+  doc === buildDoc(source, fs.readFileSync(DOC_TEMPLATE, 'utf8'), fs.readFileSync(ICON).toString('base64')),
+  'lance `npm run build`');
+check('la notice embarque le script en entier',
+  doc.includes('window.lazyQ =') && doc.includes('==UserScript=='));
+check('la notice n\'a plus de marqueur de gabarit',
+  !/\{\{[A-Z]+\}\}/.test(doc));
+// Le script contient des < (comparaisons, sélecteurs) : non échappés, le
+// navigateur les lirait comme des balises et tronquerait le contenu copié.
+check('le script embarqué est échappé pour le HTML',
+  source.includes('i < count') && doc.includes('i &lt; count') && !doc.includes('i < count'));
 
 const manifest = buildManifest(source);
 const contentScript = manifest.content_scripts[0];

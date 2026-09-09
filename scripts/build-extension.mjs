@@ -11,6 +11,9 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const SOURCE = path.join(ROOT, 'userscript', 'lazyq.user.js');
 export const CONTENT = path.join(ROOT, 'extension', 'content.js');
 export const MANIFEST = path.join(ROOT, 'extension', 'manifest.json');
+export const DOC_TEMPLATE = path.join(ROOT, 'docs', 'installation.template.html');
+export const DOC = path.join(ROOT, 'docs', 'installation.html');
+export const ICON = path.join(ROOT, 'extension', 'icons', 'icon128.png');
 
 const MATCHES = [
   'https://app.hubspot.com/*',
@@ -63,12 +66,30 @@ export function manifestText(source) {
   return JSON.stringify(buildManifest(source), null, 2) + '\n';
 }
 
+/**
+ * La notice d'installation embarque le script à copier : elle doit donc être
+ * régénérée en même temps, sans quoi les collègues installeraient une version
+ * périmée.
+ */
+export function buildDoc(source, template, iconBase64) {
+  const escaped = source.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return template
+    .replace('{{SCRIPT}}', escaped)
+    .replace('{{ICON}}', iconBase64)
+    .replace('{{VERSION}}', readVersion(source));
+}
+
 function main() {
   const source = fs.readFileSync(SOURCE, 'utf8');
   fs.mkdirSync(path.dirname(CONTENT), { recursive: true });
   fs.writeFileSync(CONTENT, buildContent(source));
   fs.writeFileSync(MANIFEST, manifestText(source));
-  console.log(`LazyQ v${readVersion(source)} — extension/content.js et extension/manifest.json régénérés`);
+
+  const template = fs.readFileSync(DOC_TEMPLATE, 'utf8');
+  const icon = fs.readFileSync(ICON).toString('base64');
+  fs.writeFileSync(DOC, buildDoc(source, template, icon));
+
+  console.log(`LazyQ v${readVersion(source)} — extension/ et docs/installation.html régénérés`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();

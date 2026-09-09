@@ -12,8 +12,9 @@ Le projet se décline en deux formes, à partir du **même code** :
 
 | | |
 | --- | --- |
-| `extension/` | Extension Chrome / Firefox — **générée**, ne pas éditer à la main |
 | `userscript/lazyq.user.js` | La source, utilisable telle quelle dans Tampermonkey |
+| `extension/` | Extension Chrome / Firefox — **générée**, ne pas éditer à la main |
+| `docs/installation.html` | Notice pour l'équipe — **générée**, embarque le script |
 
 ## Installer l'extension
 
@@ -37,8 +38,14 @@ chargée non empaquetée d'une session à l'autre.
 
 ## Installer le userscript (alternative)
 
-Tampermonkey → onglet **+** → coller le contenu de `userscript/lazyq.user.js` →
-`Ctrl+S`. Aucune construction nécessaire, c'est le fichier source.
+Tampermonkey → *Créer un nouveau script* → coller le contenu de
+`userscript/lazyq.user.js` → `Ctrl+S`. Aucune construction nécessaire, c'est le
+fichier source.
+
+C'est la voie recommandée pour l'équipe : Tampermonkey étant lui-même signé,
+l'installation est permanente sur Firefox, sans passer par AMO.
+`docs/installation.html` est la notice à leur transmettre — elle embarque le
+script avec un bouton de copie, et se régénère avec `npm run build`.
 
 ## Utilisation
 
@@ -192,9 +199,10 @@ npm run icons    # régénère les icônes (python3, sans dépendance)
 npm test
 ```
 
-Le userscript est la source unique ; `extension/content.js` et
-`extension/manifest.json` en sont dérivés, et un test échoue s'ils ne sont plus
-à jour. Le manifeste injecte le script en `world: "MAIN"`, donc dans le même
+Le userscript est la source unique ; `extension/content.js`,
+`extension/manifest.json` et `docs/installation.html` en sont dérivés, et un test
+échoue s'ils ne sont plus à jour — la notice embarquant le script, une version
+périmée s'y installerait sans bruit. Le manifeste injecte le script en `world: "MAIN"`, donc dans le même
 contexte qu'un userscript : `window.lazyQ` reste accessible depuis la console
 ordinaire, et le comportement est identique à la version validée.
 
@@ -205,7 +213,8 @@ ordinaire, et le comportement est identique à la version validée.
   `role="option"` portant le texte cherché.
 - **`migration.test.mjs`** — la reprise des combinaisons enregistrées sous
   l'ancien nom, et la résistance à un stockage corrompu.
-- **`extension.test.mjs`** — la fraîcheur du build et la cohérence du manifeste.
+- **`extension.test.mjs`** — la fraîcheur de l'extension et de la notice, et la
+  cohérence du manifeste.
 
 Ces harnais valident la mécanique, **pas** que les sélecteurs correspondent au
 vrai DOM HubSpot : seule la sonde sur le portail réel le dit.
