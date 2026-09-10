@@ -257,45 +257,37 @@ check('lit sa valeur sans le libellé',
 // ---------------------------------------------------------------------------
 // 5. Escalade
 // ---------------------------------------------------------------------------
-check('chaîné depuis une qualification vide donne 2', hs.asrTarget('', true) === 'Appel sans réponse 2');
-check('chaîné depuis la valeur sans numéro donne 2', hs.asrTarget('Appel sans réponse', true) === 'Appel sans réponse 2');
-check('chaîné escalade 2 vers 3', hs.asrTarget('Appel sans réponse 2', true) === 'Appel sans réponse 3');
-check('chaîné escalade 3 vers 4', hs.asrTarget('Appel sans réponse 3', true) === 'Appel sans réponse 4');
-check('chaîné plafonne à 4', hs.asrTarget('Appel sans réponse 4', true) === 'Appel sans réponse 4');
-check('non chaîné pose le cran 1', hs.asrTarget('', false) === 'Appel sans réponse 1');
-check('non chaîné ramène un cran existant à 1', hs.asrTarget('Appel sans réponse 3', false) === 'Appel sans réponse 1');
-check('écrase une qualification étrangère au lieu de s\'abstenir',
-  hs.asrTarget('Essai IA', false) === 'Appel sans réponse 1'
-  && hs.asrTarget('Rendez-vous pris', true) === 'Appel sans réponse 2',
-  `${hs.asrTarget('Essai IA', false)} / ${hs.asrTarget('Rendez-vous pris', true)}`);
+// La qualification appartient au contact : le compteur se lit sur lui-même.
+check('une qualification vide donne le cran 1', hs.asrTarget('') === 'Appel sans réponse 1');
+check('le cran 1 monte à 2', hs.asrTarget('Appel sans réponse 1') === 'Appel sans réponse 2');
+check('le cran 2 monte à 3', hs.asrTarget('Appel sans réponse 2') === 'Appel sans réponse 3');
+check('le cran 3 monte à 4', hs.asrTarget('Appel sans réponse 3') === 'Appel sans réponse 4');
+check('le cran 4 plafonne', hs.asrTarget('Appel sans réponse 4') === 'Appel sans réponse 4');
+check('une valeur étrangère repart du cran 1',
+  hs.asrTarget('Essai IA') === 'Appel sans réponse 1' && hs.asrTarget('Rendez-vous pris') === 'Appel sans réponse 1',
+  `${hs.asrTarget('Essai IA')} / ${hs.asrTarget('Rendez-vous pris')}`);
 
-// « Essai IA » est écrasé : la propriété passe en édition et prend le cran.
+// « Essai IA » est écrasé : la propriété passe en édition et prend le cran 1.
 hs.setPresetAutoASR(hs.presets[0], true);
-const overwritten = await hs.applyAutoASR(false);
+const first = await hs.applyAutoASR();
 await settle();
 check('Auto ASR écrase Essai IA par le cran 1',
   el('asr-select')?.dataset.selected === 'Appel sans réponse 1',
-  JSON.stringify(overwritten) + ' / ' + el('asr-select')?.dataset.selected);
-
-const chainedRun = await hs.applyAutoASR(true);
-await settle();
-check('Auto ASR chaîné monte ensuite au cran 2',
-  el('asr-select')?.dataset.selected === 'Appel sans réponse 2',
-  JSON.stringify(chainedRun) + ' / ' + el('asr-select')?.dataset.selected);
+  JSON.stringify(first) + ' / ' + el('asr-select')?.dataset.selected);
 check('la propriété est passée en mode édition',
   doc.querySelector('[data-deferred-property-input-root]').getAttribute('data-deferred-property-input-mode') === 'edit');
 
-const nextRun = await hs.applyAutoASR(true);
+const second = await hs.applyAutoASR();
 await settle();
-check('un second passage chaîné monte à 3',
-  el('asr-select')?.dataset.selected === 'Appel sans réponse 3',
-  JSON.stringify(nextRun) + ' / ' + el('asr-select')?.dataset.selected);
+check('un second passage monte au cran 2',
+  el('asr-select')?.dataset.selected === 'Appel sans réponse 2',
+  JSON.stringify(second) + ' / ' + el('asr-select')?.dataset.selected);
 
-const aloneRun = await hs.applyAutoASR(false);
+const third = await hs.applyAutoASR();
 await settle();
-check('un passage non chaîné redescend au cran 1',
-  el('asr-select')?.dataset.selected === 'Appel sans réponse 1',
-  JSON.stringify(aloneRun) + ' / ' + el('asr-select')?.dataset.selected);
+check('un troisième passage monte au cran 3',
+  el('asr-select')?.dataset.selected === 'Appel sans réponse 3',
+  JSON.stringify(third) + ' / ' + el('asr-select')?.dataset.selected);
 hs.setPresetAutoASR(hs.presets[0], false);
 
 // Certains blocs n'ont pas répondu au clic sur leur racine lors des essais

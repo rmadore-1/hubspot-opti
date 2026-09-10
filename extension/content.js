@@ -1,5 +1,5 @@
 // Généré par scripts/build-extension.mjs — ne pas modifier à la main.
-// Source : userscript/lazyq.user.js (v3.2.0)
+// Source : userscript/lazyq.user.js (v3.3.0)
 
 // L'app HubSpot est un assemblage d'iframes : la fiche contact et le widget
 // d'appel (/calling/.../twilio) sont des documents distincts. Le script est
@@ -397,20 +397,18 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Qualification à écrire. Lancer une combinaison écrase toujours la valeur
-   * en place, quelle qu'elle soit.
+   * Qualification à écrire, déduite de la seule valeur en place.
    *
-   * `chained` dit si l'appel précédent est comparable — même numéro et même
-   * catégorisation. Sans chaînage, l'appel est une première tentative et vaut
-   * le cran 1. Avec chaînage on monte d'un cran depuis la valeur courante, et
-   * on plafonne ; une valeur étrangère à l'échelle ne porte aucun cran, elle
-   * compte donc pour le premier. Fonction pure, testée isolément.
+   * La qualification appartient au contact, pas à l'appel : le compteur se lit
+   * donc sur lui-même et n'a rien à comparer. Vide, ou portant une valeur
+   * étrangère à l'échelle, il repart du premier cran ; sinon il monte d'un
+   * cran et plafonne. Fonction pure, testée isolément.
    */
-  function asrTarget(current, chained, field = CONFIG.asrField) {
-    if (!chained) return `${field.prefix} 1`;
-
+  function asrTarget(current, field = CONFIG.asrField) {
     const match = norm(current || '').match(new RegExp(norm(field.prefix) + '\\s*(\\d*)'));
-    const rank = match ? (Number(match[1]) || 1) : 1;
+    if (!match) return `${field.prefix} 1`;
+
+    const rank = Number(match[1]) || 1;
     return `${field.prefix} ${Math.min(rank + 1, field.max)}`;
   }
 
@@ -665,11 +663,6 @@
         return;
       }
 
-      // Photographier avant d'ouvrir : le dépliage re-rend la chronologie.
-      const last = cardInfo(cards[0]);
-      const previous = cards[1] ? cardInfo(cards[1]) : null;
-      const chained = !!previous && samePhone(last, previous) && cardMatchesPreset(previous, preset);
-
       report('pending', 'Ouverture du dernier appel…');
       const card = await ensureCardOpen(cards[0], preset);
       if (!card) {
@@ -694,7 +687,7 @@
 
       // 3. Escalade de la qualification, si l'option est cochée.
       if (preset.autoASR) {
-        const outcome = await applyAutoASR(chained);
+        const outcome = await applyAutoASR();
         if (outcome.why) warnings.push(outcome.why);
         if (outcome.note) console.info('[LazyQ]', outcome.note);
       }
@@ -715,12 +708,12 @@
   }
 
   /** Fait monter la qualification d'un cran, ou pose le premier barreau. */
-  async function applyAutoASR(chained) {
+  async function applyAutoASR() {
     const field = CONFIG.asrField;
     const control = findPropertyControl(field.labels);
     if (!control) return { why: `${field.name} introuvable — escalade ignorée` };
 
-    const target = asrTarget(readPropertyValue(control), chained);
+    const target = asrTarget(readPropertyValue(control));
 
     report('pending', `… ${field.name}`);
     const result = await setPropertyValue(field, target);
@@ -1364,7 +1357,9 @@
       lines.push(`    texte : "${info.text.slice(0, 220)}"`);
     });
 
-    // La décision que prendra l'option Auto ASR, calculée sur l'état actuel.
+    // Informatif seulement : la qualification appartenant au contact, ces
+    // comparaisons ne gouvernent plus l'escalade. Elles restent utiles pour
+    // vérifier qu'on parle bien du bon appel précédent.
     if (cards.length >= 2) {
       const last = cardInfo(cards[0]);
       const previous = cardInfo(cards[1]);
@@ -1380,8 +1375,7 @@
     if (asr) {
       const current = readPropertyValue(asr);
       lines.push(`    valeur actuelle = "${current}"`);
-      lines.push(`    si l'appel d'avant correspond  = "${asrTarget(current, true)}"`);
-      lines.push(`    sinon                          = "${asrTarget(current, false)}"`);
+      lines.push(`    prochaine valeur = "${asrTarget(current)}"`);
     }
 
     return lines.join('\n');

@@ -80,30 +80,20 @@ Le panneau ⚙️ liste les combinaisons. Pour chacune :
   déjà attribué à une autre combinaison est refusé, avec le nom du coupable.
 - **Absorber** — recopie dans la combinaison ce qui est *actuellement posé sur
   l'appel ouvert*.
-- **Auto ASR** — désactivée par défaut. Une fois le ciblage de la chronologie
-  établi : si l'appel précédent vise le même numéro et porte déjà cette
-  combinaison, faire monter « Qualification du lead IA » d'un cran, plafonné à
-  *Appel sans réponse 4*.
+- **Auto ASR** — désactivée par défaut. Fait monter « Qualification du lead IA »
+  d'un cran à chaque lancement de la combinaison, plafonné à 4.
 
-  Un appel est *chaîné* quand le précédent vise le même numéro et porte déjà
-  cette combinaison. L'aperçu replié n'affichant que le **résultat** de l'appel
-  — « Appel - Connecté », « Appel - Répondeur/Pas de réponse » — et jamais le
-  type, une seule valeur de la combinaison suffit à établir la correspondance ;
-  en exiger toutes rendrait le chaînage systématiquement faux. Sans chaînage — pas d'appel avant, numéro différent ou
-  illisible, autre catégorisation — c'est une première tentative, donc
-  *Appel sans réponse 1*.
+  | Qualification actuelle | Devient |
+  | --- | --- |
+  | vide | *Appel sans réponse 1* |
+  | *Appel sans réponse 1* | 2 |
+  | *Appel sans réponse 3* | 4 |
+  | *Appel sans réponse 4* | 4 |
+  | *Essai IA*, ou toute autre valeur | *Appel sans réponse 1* |
 
-  | Qualification actuelle | Chaîné | Sans chaînage |
-  | --- | --- | --- |
-  | vide | *Appel sans réponse 2* | *Appel sans réponse 1* |
-  | *Appel sans réponse 2* | 3 | 1 |
-  | *Appel sans réponse 4* | 4 | 1 |
-  | *Essai IA*, ou toute autre valeur | 2 | 1 |
-
-  Lancer une combinaison **écrase toujours** la qualification en place. Une
-  valeur étrangère à l'échelle ne porte aucun cran : elle compte pour le
-  premier, d'où le 2 en cas de chaînage.
-- **Supprimer**.
+  Cette qualification appartient au **contact**, pas à l'appel : le compteur se
+  lit donc sur lui-même et n'a rien à comparer. Chaque lancement de la
+  combinaison vaut une tentative sans réponse de plus.
 
 **+ Ajouter depuis l'appel courant** crée une combinaison à partir de l'appel
 ouvert, nommée d'après les valeurs absorbées.
