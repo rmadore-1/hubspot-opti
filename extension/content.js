@@ -1,5 +1,5 @@
 // Généré par scripts/build-extension.mjs — ne pas modifier à la main.
-// Source : userscript/lazyq.user.js (v2.6.0)
+// Source : userscript/lazyq.user.js (v2.7.0)
 
 // L'app HubSpot est un assemblage d'iframes : la fiche contact et le widget
 // d'appel (/calling/.../twilio) sont des documents distincts. Le script est
@@ -293,13 +293,20 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Valeur suivante de la qualification : absente ou sans numéro vaut 1, on
-   * monte d'un cran, et on plafonne. Fonction pure, testée isolément.
+   * Valeur suivante de la qualification, ou null s'il ne faut rien écrire.
+   *
+   * Une qualification déjà renseignée avec autre chose qu'un « appel sans
+   * réponse » appartient à l'opérateur : on n'écrase pas son travail. Vide, ou
+   * sans numéro, vaut le premier cran ; ensuite on monte et on plafonne.
+   * Fonction pure, testée isolément.
    */
   function nextASRValue(current, field = CONFIG.asrField) {
-    const prefix = norm(field.prefix);
-    const match = norm(current || '').match(new RegExp(prefix + '\\s*(\\d*)'));
-    const rank = match ? (Number(match[1]) || 1) : 1;
+    const value = norm(current || '');
+    const match = value.match(new RegExp(norm(field.prefix) + '\\s*(\\d*)'));
+
+    if (!match) return value ? null : `${field.prefix} 2`;
+
+    const rank = Number(match[1]) || 1;
     return `${field.prefix} ${Math.min(rank + 1, field.max)}`;
   }
 
@@ -1111,7 +1118,8 @@
     if (asr) {
       const current = readValue(asr.trigger).trim();
       lines.push(`    valeur actuelle = "${current}"`);
-      lines.push(`    prochaine valeur calculée = "${nextASRValue(current)}"`);
+      const next = nextASRValue(current);
+      lines.push(`    prochaine valeur calculée = ${next ? `"${next}"` : 'AUCUNE — qualification étrangère, on laisse l\'opérateur'}`);
     }
 
     return lines.join('\n');

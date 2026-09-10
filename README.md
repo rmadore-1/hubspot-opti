@@ -80,8 +80,13 @@ Le panneau ⚙️ liste les combinaisons. Pour chacune :
 - **Auto ASR** — désactivée par défaut. Une fois le ciblage de la chronologie
   établi : si l'appel précédent vise le même numéro et porte déjà cette
   combinaison, faire monter « Qualification du lead IA » d'un cran, plafonné à
-  *Appel sans réponse 4*. Sans numéro lisible des deux côtés, l'escalade ne se
-  déclenche pas.
+  *Appel sans réponse 4*.
+
+  Trois garde-fous, tous bloquants : sans numéro lisible des deux côtés,
+  l'escalade ne se déclenche pas ; sans appel précédent, non plus ; et **une
+  qualification déjà renseignée avec autre chose qu'un « appel sans réponse »
+  est laissée intacte** — c'est le travail de l'opérateur, LazyQ ne l'écrase
+  pas.
 - **Supprimer**.
 
 **+ Ajouter depuis l'appel courant** crée une combinaison à partir de l'appel

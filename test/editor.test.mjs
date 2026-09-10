@@ -291,8 +291,12 @@ check('escalade depuis la valeur sans numéro',
 check('escalade 2 vers 3', hs.nextASRValue('Appel sans réponse 2') === 'Appel sans réponse 3');
 check('escalade 3 vers 4', hs.nextASRValue('Appel sans réponse 3') === 'Appel sans réponse 4');
 check('plafonne à 4', hs.nextASRValue('Appel sans réponse 4') === 'Appel sans réponse 4');
-check('repart de 2 depuis une qualification étrangère',
-  hs.nextASRValue('Rendez-vous pris') === 'Appel sans réponse 2', hs.nextASRValue('Rendez-vous pris'));
+check('ne touche pas à une qualification étrangère',
+  hs.nextASRValue('Rendez-vous pris') === null, String(hs.nextASRValue('Rendez-vous pris')));
+check('ne touche pas non plus à la qualification vue sur le portail',
+  hs.nextASRValue('Essai IA') === null, String(hs.nextASRValue('Essai IA')));
+check('démarre bien à 2 quand la qualification est vide',
+  hs.nextASRValue('   ') === 'Appel sans réponse 2', String(hs.nextASRValue('   ')));
 
 check('la sonde rapporte la chronologie',
   hs.probeText().includes('--- CHRONOLOGIE ---') && hs.timelineText().includes("Cartes d'appel retenues : 3"));
