@@ -1,5 +1,5 @@
 // Généré par scripts/build-extension.mjs — ne pas modifier à la main.
-// Source : userscript/lazyq.user.js (v3.5.0)
+// Source : userscript/lazyq.user.js (v3.6.0)
 
 // L'app HubSpot est un assemblage d'iframes : la fiche contact et le widget
 // d'appel (/calling/.../twilio) sont des documents distincts. Le script est
@@ -570,8 +570,19 @@
     return label && full.startsWith(label) ? full.slice(label.length).trim() : full;
   }
 
-  const EDIT_TRIGGER = '[role="combobox"], button[aria-haspopup], select, input:not([type="hidden"]),'
-    + ' [class*="select" i] button, [data-test-id*="select" i]';
+  // HubSpot nomme le champ d'une propriété data-selenium-test="property-input-…",
+  // d'après la propriété elle-même : c'est le repère le plus sûr du lot.
+  const PROPERTY_INPUT = '[data-selenium-test*="property-input" i]';
+
+  const EDIT_TRIGGER = [
+    PROPERTY_INPUT,
+    '[role="combobox"]',
+    'button[aria-haspopup]',
+    'select',
+    'input:not([type="hidden"])',
+    '[class*="select" i] button',
+    '[data-test-id*="select" i]',
+  ].join(', ');
 
   /** Le bouton « Actions » de la propriété : copier la valeur, etc. */
   function isActionsMenu(el) {
@@ -582,16 +593,24 @@
   /**
    * Le champ éditable de la propriété, une fois celle-ci activée.
    *
-   * En mode « display » il n'existe pas : ce qu'on y trouve est le menu
-   * Actions du bloc. Le confondre avec l'éditeur faisait cliquer « Valeur de
-   * copie » puis attendre une liste d'options qui n'arrivait jamais.
+   * En mode « display » il n'existe pas : ce qu'on y trouve est le menu Actions
+   * du bloc. Le confondre avec l'éditeur faisait cliquer « Valeur de copie »
+   * puis attendre une liste d'options qui n'arrivait jamais.
+   *
+   * Le mode actif porte plusieurs noms selon le type de propriété — « input »
+   * pour une liste déroulante. N'exiger que « edit » refusait un champ pourtant
+   * prêt : on écarte donc « display », et rien d'autre.
    */
   function propertyTrigger(field, fallback) {
     const live = findPropertyControl(field.labels) || fallback;
-    if (!live || live.getAttribute('data-deferred-property-input-mode') !== 'edit') return null;
-    return [...live.querySelectorAll(EDIT_TRIGGER)]
-      .filter(isVisible)
-      .find((el) => !isActionsMenu(el)) || null;
+    if (!live || live.getAttribute('data-deferred-property-input-mode') === 'display') return null;
+
+    const candidates = [...live.querySelectorAll(EDIT_TRIGGER)]
+      .filter((el) => isVisible(el) && !isActionsMenu(el));
+
+    // querySelectorAll rend l'ordre du document, pas celui des sélecteurs :
+    // le repère nommé se choisit explicitement.
+    return candidates.find((el) => el.matches(PROPERTY_INPUT)) || candidates[0] || null;
   }
 
   /**
@@ -1548,6 +1567,7 @@
     let trigger = propertyTrigger(field, root);
     lines.push(`   mode initial = ${root.getAttribute('data-deferred-property-input-mode')}`);
     lines.push(`   déclencheur avant activation = ${trigger ? nodeSignature(trigger) : 'aucun (attendu en mode display)'}`);
+    lines.push('   (le mode actif se nomme « input » pour une liste déroulante)');
 
     for (const [label, act] of attempts) {
       if (trigger) break;

@@ -132,10 +132,11 @@ for (const accordion of doc.querySelectorAll('.accordion')) {
 const property = doc.querySelector('[data-deferred-property-input-root]');
 property.addEventListener('mousedown', () => {
   if (property.getAttribute('data-deferred-property-input-mode') === 'edit') return;
-  property.setAttribute('data-deferred-property-input-mode', 'edit');
+  property.setAttribute('data-deferred-property-input-mode', 'input');
   const value = property.querySelector('.value');
   const trigger = doc.createElement('button');
   trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('data-selenium-test', 'property-input-qualification_du_lead_ia');
   trigger.dataset.testId = 'asr-select';
   trigger.textContent = value.textContent;
   value.replaceWith(trigger);
@@ -262,6 +263,32 @@ check('ne voit aucun champ tant que la propriété est en mode display',
   String(hs.propertyTrigger(hs.CONFIG.asrField, control)?.outerHTML));
 check('reconnaît le bouton Actions', hs.isActionsMenu(control.querySelector('button')));
 
+// HubSpot nomme ce mode « input », pas « edit » : n'accepter que « edit »
+// refusait un champ pourtant prêt.
+// Libellé distinct : sinon findPropertyControl retombe sur la propriété de la
+// barre latérale et le test ne porte pas sur l'élément voulu.
+const testField = { labels: ['propriété de test'] };
+const modes = doc.createElement('div');
+modes.setAttribute('data-deferred-property-input-root', 'true');
+modes.setAttribute('data-deferred-property-input-mode', 'input');
+modes.innerHTML = '<label><span>Propriété de test</span></label>'
+  + '<button aria-label="Autres actions" aria-haspopup="menu"></button>'
+  + '<button aria-haspopup="listbox">générique</button>'
+  + '<button data-selenium-test="property-input-propriete_de_test">À recontacter</button>';
+doc.body.appendChild(modes);
+check('accepte un mode actif nommé « input »',
+  hs.propertyTrigger(testField, modes) !== null,
+  String(hs.propertyTrigger(testField, modes)));
+check('préfère le champ nommé d\'après la propriété',
+  hs.propertyTrigger(testField, modes)?.getAttribute('data-selenium-test') === 'property-input-propriete_de_test',
+  hs.propertyTrigger(testField, modes)?.outerHTML.slice(0, 70));
+check('écarte le bouton Actions au profit d\'un vrai champ',
+  !hs.isActionsMenu(hs.propertyTrigger(testField, modes)));
+modes.setAttribute('data-deferred-property-input-mode', 'display');
+check('refuse toujours le mode display',
+  hs.propertyTrigger(testField, modes) === null);
+modes.remove();
+
 // ---------------------------------------------------------------------------
 // 5. Escalade
 // ---------------------------------------------------------------------------
@@ -282,8 +309,8 @@ await settle();
 check('Auto ASR écrase Essai IA par le cran 1',
   el('asr-select')?.dataset.selected === 'Appel sans réponse 1',
   JSON.stringify(first) + ' / ' + el('asr-select')?.dataset.selected);
-check('la propriété est passée en mode édition',
-  doc.querySelector('[data-deferred-property-input-root]').getAttribute('data-deferred-property-input-mode') === 'edit');
+check('la propriété est passée en mode actif',
+  doc.querySelector('[data-deferred-property-input-root]').getAttribute('data-deferred-property-input-mode') === 'input');
 
 const second = await hs.applyAutoASR();
 await settle();
@@ -312,9 +339,10 @@ function rebuildProperty(activateOn) {
 
   const activate = () => {
     if (fresh.getAttribute('data-deferred-property-input-mode') === 'edit') return;
-    fresh.setAttribute('data-deferred-property-input-mode', 'edit');
+    fresh.setAttribute('data-deferred-property-input-mode', 'input');
     const trigger = doc.createElement('button');
     trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('data-selenium-test', 'property-input-qualification_du_lead_ia');
     trigger.dataset.testId = 'asr-select';
     trigger.textContent = 'Essai IA';
     fresh.querySelector('.value').replaceWith(trigger);
@@ -332,12 +360,12 @@ function rebuildProperty(activateOn) {
 const enterOnly = rebuildProperty('enter');
 check('active la propriété au clavier quand le clic ne suffit pas',
   await hs.enterEditMode(hs.CONFIG.asrField, enterOnly)
-  && enterOnly.getAttribute('data-deferred-property-input-mode') === 'edit');
+  && enterOnly.getAttribute('data-deferred-property-input-mode') === 'input');
 
 const innerOnly = rebuildProperty('inner');
 check('active la propriété en cliquant sa zone de valeur en dernier recours',
   await hs.enterEditMode(hs.CONFIG.asrField, innerOnly)
-  && innerOnly.getAttribute('data-deferred-property-input-mode') === 'edit');
+  && innerOnly.getAttribute('data-deferred-property-input-mode') === 'input');
 
 // Les classes de HubSpot sont en PascalCase et [class*="option"] est sensible
 // à la casse : sans le drapeau i, ces options sont invisibles au script.

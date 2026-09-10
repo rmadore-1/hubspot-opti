@@ -176,9 +176,14 @@ sur la zone de valeur, tous les blocs ne répondant pas au clic sur leur racine.
 Le bloc porte aussi, dès le mode lecture, un bouton **Actions** (copier la
 valeur…). Le prendre pour l'éditeur faisait cliquer *Valeur de copie* puis
 attendre une liste d'options qui n'arrivait jamais. D'où une règle
-structurelle : **en mode `display`, il n'y a pas de champ** — le script
-n'en cherche un qu'une fois le bloc passé en `edit`, et écarte au passage
-tout ce qui porte un `aria-label` d'actions ou un `aria-haspopup="menu"`.
+structurelle : **en mode `display`, il n'y a pas de champ** — et tout ce qui
+porte un `aria-label` d'actions ou un `aria-haspopup="menu"` est écarté.
+
+Le mode actif, lui, ne s'appelle pas `edit` mais **`input`** pour une liste
+déroulante. Exiger `edit` refusait un champ pourtant prêt : seul `display` est
+donc rejeté. Le champ se reconnaît au mieux à son
+`data-selenium-test="property-input-<propriété>"`, choisi en priorité — l'ordre
+du document ne garantissant pas celui des sélecteurs.
 
 Piège de sélecteur : `[class*="option"]` est **sensible à la casse**, et les
 classes de HubSpot sont en PascalCase (`UISelectOption__StyledOption`). Sans le

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LazyQ",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "description": "Qualifie un appel HubSpot en un clic ou un raccourci clavier.",
   "icons": {
     "16": "icons/icon16.png",
