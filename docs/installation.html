@@ -154,6 +154,19 @@
     font-size: 15px;
   }
 
+  .after p { margin: 0; font-size: 15px; color: var(--ink-soft); }
+  .ladder {
+    font-family: var(--mono);
+    font-size: 13px !important;
+    color: var(--ink) !important;
+    background: var(--accent-soft);
+    border-radius: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .ladder span { color: var(--accent); }
+
   footer { color: var(--ink-soft); font-size: 13px; font-family: var(--mono); }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1931,8 +1944,8 @@
     <h2>Au quotidien</h2>
     <dl>
       <div>
-        <dt>Qualifier l'appel ouvert</dt>
-        <dd>Clic sur <strong>Répondeur / Prospection</strong>, ou <kbd>Ctrl</kbd> + <kbd>Maj</kbd> + <kbd>K</kbd>. Le type d'appel et le résultat se remplissent tout seuls.</dd>
+        <dt>Qualifier le dernier appel</dt>
+        <dd>Clic sur <strong>Répondeur / Prospection</strong>, ou <kbd>Ctrl</kbd> + <kbd>Maj</kbd> + <kbd>K</kbd>. LazyQ déplie tout seul le dernier appel de la chronologie et remplit le type et le résultat.</dd>
       </div>
       <div>
         <dt>Enregistrer</dt>
@@ -1943,7 +1956,15 @@
         <dd>Qualifier un appel à la main comme tu veux le mémoriser, puis <strong>⚙️ → + Ajouter depuis l'appel courant</strong>. Cliquer ensuite sur le bouton de raccourci et taper la combinaison voulue. L'œil affiche ou masque son bouton en bas de page.</dd>
       </div>
     </dl>
-    <p class="warn">L'éditeur d'appel doit être ouvert — l'appel sélectionné et déplié dans la chronologie — avant de cliquer.</p>
+    <p class="warn">Rien à déplier au préalable : LazyQ vise toujours le <strong>dernier</strong> appel de la chronologie, même si tu en as ouvert un autre.</p>
+  </section>
+
+  <section class="after">
+    <h2>Auto ASR</h2>
+    <p>Une case à cocher par combinaison, dans <strong>⚙️</strong>. Décochée, LazyQ n'y touche pas.</p>
+    <p>Cochée, chaque lancement de la combinaison fait aussi monter d'un cran la propriété <strong>Qualification du lead IA</strong> du contact — une tentative sans réponse de plus :</p>
+    <p class="ladder">vide <span>→</span> Appel sans réponse 1 <span>→</span> 2 <span>→</span> 3 <span>→</span> 4 <span>(plafond)</span></p>
+    <p class="warn">Cette qualification appartient au contact, pas à l'appel : le compteur se lit sur lui-même. Toute autre valeur qu'un « appel sans réponse » est écrasée et repart à 1.</p>
   </section>
 
   <footer>LazyQ v3.6.0</footer>
