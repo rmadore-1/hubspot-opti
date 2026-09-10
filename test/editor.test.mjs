@@ -284,19 +284,29 @@ check('reconnaît une carte déjà catégorisée comme la combinaison',
 check('ne confond pas avec un appel d\'une autre nature',
   !hs.cardMatchesPreset(third, hs.presets[0]));
 
-check('escalade depuis une qualification vide',
-  hs.nextASRValue('') === 'Appel sans réponse 2', hs.nextASRValue(''));
-check('escalade depuis la valeur sans numéro',
-  hs.nextASRValue('Appel sans réponse') === 'Appel sans réponse 2');
-check('escalade 2 vers 3', hs.nextASRValue('Appel sans réponse 2') === 'Appel sans réponse 3');
-check('escalade 3 vers 4', hs.nextASRValue('Appel sans réponse 3') === 'Appel sans réponse 4');
-check('plafonne à 4', hs.nextASRValue('Appel sans réponse 4') === 'Appel sans réponse 4');
-check('ne touche pas à une qualification étrangère',
-  hs.nextASRValue('Rendez-vous pris') === null, String(hs.nextASRValue('Rendez-vous pris')));
+// Appel chaîné : le précédent vise le même numéro et porte la combinaison.
+check('chaîné depuis une qualification vide donne 2',
+  hs.asrTarget('', true) === 'Appel sans réponse 2', hs.asrTarget('', true));
+check('chaîné depuis la valeur sans numéro donne 2',
+  hs.asrTarget('Appel sans réponse', true) === 'Appel sans réponse 2');
+check('chaîné escalade 2 vers 3', hs.asrTarget('Appel sans réponse 2', true) === 'Appel sans réponse 3');
+check('chaîné escalade 3 vers 4', hs.asrTarget('Appel sans réponse 3', true) === 'Appel sans réponse 4');
+check('chaîné plafonne à 4', hs.asrTarget('Appel sans réponse 4', true) === 'Appel sans réponse 4');
+
+// Sans appel précédent comparable : première tentative.
+check('non chaîné pose le cran 1',
+  hs.asrTarget('', false) === 'Appel sans réponse 1', hs.asrTarget('', false));
+check('non chaîné pose 1 même sur un espace vide',
+  hs.asrTarget('   ', false) === 'Appel sans réponse 1');
+check('non chaîné ramène un cran existant à 1',
+  hs.asrTarget('Appel sans réponse 3', false) === 'Appel sans réponse 1',
+  hs.asrTarget('Appel sans réponse 3', false));
+
+// La qualification de l'opérateur prime dans les deux cas.
+check('ne touche pas à une qualification étrangère, chaîné ou non',
+  hs.asrTarget('Rendez-vous pris', true) === null && hs.asrTarget('Rendez-vous pris', false) === null);
 check('ne touche pas non plus à la qualification vue sur le portail',
-  hs.nextASRValue('Essai IA') === null, String(hs.nextASRValue('Essai IA')));
-check('démarre bien à 2 quand la qualification est vide',
-  hs.nextASRValue('   ') === 'Appel sans réponse 2', String(hs.nextASRValue('   ')));
+  hs.asrTarget('Essai IA', false) === null, String(hs.asrTarget('Essai IA', false)));
 
 check('la sonde rapporte la chronologie',
   hs.probeText().includes('--- CHRONOLOGIE ---') && hs.timelineText().includes("Cartes d'appel retenues : 3"));

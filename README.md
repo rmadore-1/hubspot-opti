@@ -82,11 +82,21 @@ Le panneau ⚙️ liste les combinaisons. Pour chacune :
   combinaison, faire monter « Qualification du lead IA » d'un cran, plafonné à
   *Appel sans réponse 4*.
 
-  Trois garde-fous, tous bloquants : sans numéro lisible des deux côtés,
-  l'escalade ne se déclenche pas ; sans appel précédent, non plus ; et **une
-  qualification déjà renseignée avec autre chose qu'un « appel sans réponse »
-  est laissée intacte** — c'est le travail de l'opérateur, LazyQ ne l'écrase
-  pas.
+  Un appel est *chaîné* quand le précédent vise le même numéro et porte déjà
+  cette combinaison. Sans chaînage — pas d'appel avant, numéro différent ou
+  illisible, autre catégorisation — c'est une première tentative, donc
+  *Appel sans réponse 1*.
+
+  | Qualification actuelle | Chaîné | Sans chaînage |
+  | --- | --- | --- |
+  | vide | *Appel sans réponse 2* | *Appel sans réponse 1* |
+  | *Appel sans réponse 2* | 3 | 1 |
+  | *Appel sans réponse 4* | 4 | 1 |
+  | autre chose | intacte | intacte |
+
+  Le seul cas où LazyQ n'écrit rien est une **qualification déjà renseignée
+  avec autre chose qu'un « appel sans réponse »** : c'est le travail de
+  l'opérateur, LazyQ ne l'écrase pas.
 - **Supprimer**.
 
 **+ Ajouter depuis l'appel courant** crée une combinaison à partir de l'appel

@@ -1,5 +1,5 @@
 // Généré par scripts/build-extension.mjs — ne pas modifier à la main.
-// Source : userscript/lazyq.user.js (v2.7.0)
+// Source : userscript/lazyq.user.js (v2.8.0)
 
 // L'app HubSpot est un assemblage d'iframes : la fiche contact et le widget
 // d'appel (/calling/.../twilio) sont des documents distincts. Le script est
@@ -293,20 +293,23 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Valeur suivante de la qualification, ou null s'il ne faut rien écrire.
+   * Qualification à écrire, ou null s'il ne faut rien écrire.
    *
-   * Une qualification déjà renseignée avec autre chose qu'un « appel sans
-   * réponse » appartient à l'opérateur : on n'écrase pas son travail. Vide, ou
-   * sans numéro, vaut le premier cran ; ensuite on monte et on plafonne.
+   * `chained` dit si l'appel précédent est comparable — même numéro et même
+   * catégorisation. Sans chaînage, l'appel est une première tentative et vaut
+   * le cran 1 ; avec chaînage on monte d'un cran depuis la valeur courante, et
+   * on plafonne. Une qualification déjà renseignée avec autre chose qu'un
+   * « appel sans réponse » appartient à l'opérateur : on n'y touche pas.
    * Fonction pure, testée isolément.
    */
-  function nextASRValue(current, field = CONFIG.asrField) {
+  function asrTarget(current, chained, field = CONFIG.asrField) {
     const value = norm(current || '');
     const match = value.match(new RegExp(norm(field.prefix) + '\\s*(\\d*)'));
 
-    if (!match) return value ? null : `${field.prefix} 2`;
+    if (!match && value) return null;
+    if (!chained) return `${field.prefix} 1`;
 
-    const rank = Number(match[1]) || 1;
+    const rank = match ? (Number(match[1]) || 1) : 1;
     return `${field.prefix} ${Math.min(rank + 1, field.max)}`;
   }
 
@@ -1118,8 +1121,10 @@
     if (asr) {
       const current = readValue(asr.trigger).trim();
       lines.push(`    valeur actuelle = "${current}"`);
-      const next = nextASRValue(current);
-      lines.push(`    prochaine valeur calculée = ${next ? `"${next}"` : 'AUCUNE — qualification étrangère, on laisse l\'opérateur'}`);
+      const chained = asrTarget(current, true);
+      const alone = asrTarget(current, false);
+      lines.push(`    si l'appel d'avant correspond  = ${chained ? `"${chained}"` : 'AUCUNE — qualification étrangère'}`);
+      lines.push(`    sinon                          = ${alone ? `"${alone}"` : 'AUCUNE — qualification étrangère'}`);
     }
 
     return lines.join('\n');
@@ -1286,7 +1291,7 @@
 
   window.lazyQ = {
     probe, probeText, probeOptions, probeAnchor, timelineText, nodeSignature, trigger, runPreset, selectValue, actionsFor, findTrigger,
-    findCallCards, cardInfo, samePhone, cardMatchesPreset, nextASRValue, phonesIn,
+    findCallCards, cardInfo, samePhone, cardMatchesPreset, asrTarget, phonesIn,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
     describeHotkey, matchesHotkey, savePresets, setPresetVisible, setPresetAutoASR, toggleSettings,
     get presets() { return presets; },
