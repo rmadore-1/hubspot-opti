@@ -173,6 +173,11 @@ le bloc, attend le champ, puis sélectionne — même mécanique de menu que par
 ailleurs. L'activation retente au clavier (`Entrée` sur un `role="button"`) puis
 sur la zone de valeur, tous les blocs ne répondant pas au clic sur leur racine.
 
+Piège de sélecteur : `[class*="option"]` est **sensible à la casse**, et les
+classes de HubSpot sont en PascalCase (`UISelectOption__StyledOption`). Sans le
+drapeau `i`, ces sélecteurs ne matchent jamais rien — les champs de l'éditeur
+d'appel passaient seulement parce que leurs options portent `role="option"`.
+
 Une subtilité coûteuse : ce composant **déroule déjà sa liste** au passage en
 édition. La photo « avant » du diff doit donc dater d'avant l'activation, sinon
 les options y figurent déjà et une valeur pourtant affichée passe pour
@@ -209,6 +214,11 @@ sonde dit quoi corriger. Elle n'a volontairement ni bouton ni raccourci : c'est
 un outil de diagnostic, pas un geste quotidien.
 
 1. Ouvrir l'éditeur d'appel, puis dans la console : `lazyQ.probe()`.
+   Pour l'écriture de la qualification en particulier, `await lazyQ.traceASR()`
+   rejoue l'opération geste par geste et rapporte l'état après chacun —
+   activation du bloc, apparition du champ, ouverture de la liste — en listant
+   **tous** les éléments apparus, y compris ceux qu'aucun sélecteur d'option ne
+   voit.
 2. La sonde interroge toutes les frames et ouvre un panneau avec le rapport
    déjà sélectionné — `Cmd+C` suffit. Il liste, frame par frame : les libellés
    candidats, le déclencheur retenu pour chaque champ, sa valeur actuelle, les

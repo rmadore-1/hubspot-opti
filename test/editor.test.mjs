@@ -330,6 +330,16 @@ check('active la propriété en cliquant sa zone de valeur en dernier recours',
   await hs.enterEditMode(hs.CONFIG.asrField, innerOnly)
   && innerOnly.getAttribute('data-deferred-property-input-mode') === 'edit');
 
+// Les classes de HubSpot sont en PascalCase et [class*="option"] est sensible
+// à la casse : sans le drapeau i, ces options sont invisibles au script.
+const pascal = doc.createElement('ul');
+pascal.innerHTML = '<li class="UISelectOption__StyledOption">Appel sans réponse 2</li>';
+doc.body.appendChild(pascal);
+check('voit une option dont la classe est en PascalCase',
+  hs.optionNodes(true).some((el) => el.className === 'UISelectOption__StyledOption'),
+  hs.optionNodes(true).map((el) => el.className || el.tagName).join(' | '));
+pascal.remove();
+
 // ---------------------------------------------------------------------------
 // 6. Sonde
 // ---------------------------------------------------------------------------
@@ -344,6 +354,16 @@ check('la sonde rapporte les cartes retenues', /Cartes d'appel retenues : 3/.tes
 check('la sonde annonce les candidats bruts sans les confondre avec un menu ouvert',
   /Candidats « option » présents sur la page \(2\)/.test(probe),
   probe.split('\n').find((l) => l.startsWith('Candidats')));
+
+const trace = await hs.traceASR();
+check('la trace nomme le bloc, la valeur lue et la cible',
+  /valeur lue = ".*" → cible "Appel sans réponse/.test(trace),
+  trace.split('\n').slice(0, 3).join(' | '));
+check('la trace compte ce que chaque sélecteur voit',
+  /vus par le sélecteur strict : \d+/.test(trace) && /vus par le sélecteur large  : \d+/.test(trace));
+check('la trace conclut sur la correspondance cherchée',
+  /correspondance « Appel sans réponse \d » : (TROUVÉE|AUCUNE)/.test(trace),
+  trace.split('\n').find((l) => l.includes('correspondance')));
 
 const anchorReport = hs.probeAnchor('passé par');
 check('la sonde d\'ancre remonte les attributs utiles',

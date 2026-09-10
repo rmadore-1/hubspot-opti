@@ -198,7 +198,7 @@
           <textarea id="script" readonly spellcheck="false" aria-label="Code source de LazyQ">// ==UserScript==
 // @name         LazyQ — qualification rapide d'appel HubSpot
 // @namespace    https://webdentiste.eu/
-// @version      3.3.0
+// @version      3.4.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -351,12 +351,15 @@
   // Détection des champs
   // ---------------------------------------------------------------------------
 
+  // Le drapeau « i » n'est pas cosmétique : les classes de HubSpot sont en
+  // PascalCase (UISelectOption__StyledOption), et [class*="option"] est
+  // sensible à la casse — sans lui, ces sélecteurs ne matchent jamais rien.
   const TRIGGER_SELECTOR = [
     'select',
     '[role="combobox"]',
     'button[aria-haspopup]',
-    '[data-test-id*="select"] button',
-    '[class*="select"] button',
+    '[data-test-id*="select" i] button',
+    '[class*="select" i] button',
     'input[readonly]',
     'button',
   ];
@@ -629,11 +632,13 @@
   // propriétés matchent aussi — donc réservé aux éléments apparus après le clic.
   const BROAD_OPTION_SELECTOR = [
     OPTION_SELECTOR,
-    '[data-test-id*="option"]',
-    '[class*="option"]',
-    '[class*="dropdown"] li',
-    '[class*="menu"] li',
-    '[class*="select"] li',
+    '[data-test-id*="option" i]',
+    '[class*="option" i]',
+    '[class*="dropdown" i] li',
+    '[class*="menu" i] li',
+    '[class*="select" i] li',
+    '[class*="dropdown" i] [class*="item" i]',
+    '[class*="menu" i] [class*="item" i]',
   ].join(', ');
 
   function optionNodes(broad) {
@@ -771,7 +776,8 @@
     return label &amp;&amp; full.startsWith(label) ? full.slice(label.length).trim() : full;
   }
 
-  const EDIT_TRIGGER = '[role="combobox"], button[aria-haspopup], select, input:not([type="hidden"])';
+  const EDIT_TRIGGER = '[role="combobox"], button[aria-haspopup], select, input:not([type="hidden"]),'
+    + ' [class*="select" i] button, [data-test-id*="select" i]';
 
   /** Le champ éditable de la propriété, une fois celle-ci activée. */
   function propertyTrigger(field, fallback) {
@@ -1683,6 +1689,98 @@
     return report;
   }
 
+  /** Éléments visibles apparus depuis la photo, les plus externes seulement. */
+  function newSince(snapshot) {
+    const fresh = [...document.querySelectorAll('*')].filter((el) => isVisible(el) &amp;&amp; !snapshot.has(el));
+    return fresh.filter((el) => !fresh.some((other) => other !== el &amp;&amp; other.contains(el)));
+  }
+
+  function visibleSnapshot() {
+    return new Set([...document.querySelectorAll('*')].filter(isVisible));
+  }
+
+  /**
+   * Rejoue pas à pas l'écriture de la qualification en rapportant l'état après
+   * chaque geste. Deviner deux fois de suite ce qui bloque coûte plus cher que
+   * d'instrumenter une fois : cette trace dit où ça casse et ce que la page
+   * rend réellement, y compris ce que les sélecteurs d'options ne voient pas.
+   */
+  async function traceASR() {
+    const field = CONFIG.asrField;
+    const lines = [`--- TRACE ${field.name} ---`];
+    const dump = (label, elements) => {
+      lines.push(`   ${label} (${elements.length}) :`);
+      elements.slice(0, 30).forEach((el) => {
+        const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 70);
+        lines.push(`      ${nodeSignature(el)} "${text}"`);
+      });
+    };
+
+    const root = findPropertyControl(field.labels);
+    if (!root) { showReport(lines.concat('bloc INTROUVABLE').join('\n')); return; }
+
+    const current = readPropertyValue(root);
+    const target = asrTarget(current);
+    lines.push(`1. bloc = ${nodeSignature(root)}`);
+    lines.push(`   valeur lue = "${current}" → cible "${target}"`);
+
+    // Étape 2 : activation, geste par geste.
+    const attempts = [
+      ['clic sur le bloc', () => realClick(root)],
+      ['touche Entrée', () => {
+        if (root.focus) root.focus();
+        root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      }],
+      ['clic sur la zone de valeur', () => {
+        const inner = [...root.children].reverse().find(isVisible);
+        if (inner) realClick(inner);
+      }],
+    ];
+
+    let trigger = propertyTrigger(field, root);
+    for (const [label, act] of attempts) {
+      if (trigger) break;
+      const before = visibleSnapshot();
+      act();
+      await sleep(700);
+      const live = findPropertyControl(field.labels) || root;
+      lines.push(`2. ${label}`);
+      lines.push(`   mode = ${live.getAttribute('data-deferred-property-input-mode')}`);
+      dump('nouveaux éléments', newSince(before));
+      trigger = propertyTrigger(field, root);
+      lines.push(`   déclencheur = ${trigger ? nodeSignature(trigger) : 'AUCUN'}`);
+    }
+
+    if (!trigger) { showReport(lines.concat("3. aucun déclencheur : l'activation échoue").join('\n')); return; }
+
+    // Étape 3 : ouverture de la liste, et surtout ce que les sélecteurs voient.
+    const before = visibleSnapshot();
+    const optionsBefore = new Set(optionNodes(true));
+    realClick(trigger);
+    await sleep(700);
+
+    const appeared = newSince(before);
+    lines.push('3. clic sur le déclencheur');
+    dump('nouveaux éléments visibles', appeared);
+
+    const strict = optionNodes(false).filter((el) => !optionsBefore.has(el));
+    const broad = optionNodes(true).filter((el) => !optionsBefore.has(el));
+    lines.push(`   vus par le sélecteur strict : ${strict.length}`);
+    lines.push(`   vus par le sélecteur large  : ${broad.length}`);
+    lines.push(`   correspondance « ${target} » : ${matchOption(broad, target) ? 'TROUVÉE' : 'AUCUNE'}`);
+
+    if (!broad.length &amp;&amp; appeared.length) {
+      lines.push('   → la liste est rendue mais aucun sélecteur ne la voit :');
+      lines.push('     coller les signatures ci-dessus suffit à les corriger.');
+    }
+
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const report = lines.join('\n');
+    console.log('[LazyQ] ' + report);
+    showReport(report);
+    return report;
+  }
+
   function probe() {
     probeReports = [];
     broadcast({ type: 'probe' });
@@ -1760,7 +1858,7 @@
   if (IS_TOP) renderButtons(); else toTop({ type: 'needPresets' });
 
   window.lazyQ = {
-    probe, probeText, probeOptions, probeAnchor, timelineText, nodeSignature, trigger, runPreset, selectValue, actionsFor, findTrigger,
+    probe, probeText, probeOptions, probeAnchor, traceASR, newSince, timelineText, nodeSignature, trigger, runPreset, selectValue, actionsFor, findTrigger,
     findCallCards, cardInfo, cardDate, cardIsOpen, ensureCardOpen, samePhone, cardMatchesPreset,
     enterEditMode, propertyTrigger, outermost,
     asrTarget, phonesIn, findPropertyControl, readPropertyValue, setPropertyValue, applyAutoASR,
@@ -1811,7 +1909,7 @@
     <p class="warn">L'éditeur d'appel doit être ouvert — l'appel sélectionné et déplié dans la chronologie — avant de cliquer.</p>
   </section>
 
-  <footer>LazyQ v3.3.0</footer>
+  <footer>LazyQ v3.4.0</footer>
 </main>
 
 <script>
