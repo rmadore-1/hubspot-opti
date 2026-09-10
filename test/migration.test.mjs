@@ -32,6 +32,9 @@ check('reprend les combinaisons enregistrées sous l\'ancien nom',
   JSON.stringify(legacy.lazyQ.presets.map((p) => p.label)));
 check('conserve le raccourci de la première',
   legacy.lazyQ.presets[0].hotkey.key === 'k');
+check('n\'active pas Auto ASR sur des combinaisons qui l\'ignoraient',
+  legacy.lazyQ.presets.every((p) => p.autoASR === false),
+  JSON.stringify(legacy.lazyQ.presets.map((p) => p.autoASR)));
 check('affiche la première et masque les suivantes',
   legacy.lazyQ.presets[0].visible === true && legacy.lazyQ.presets[1].visible === false,
   JSON.stringify(legacy.lazyQ.presets.map((p) => p.visible)));

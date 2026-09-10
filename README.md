@@ -77,6 +77,11 @@ Le panneau ⚙️ liste les combinaisons. Pour chacune :
   déjà attribué à une autre combinaison est refusé, avec le nom du coupable.
 - **Absorber** — recopie dans la combinaison ce qui est *actuellement posé sur
   l'appel ouvert*.
+- **Auto ASR** — désactivée par défaut. Une fois le ciblage de la chronologie
+  établi : si l'appel précédent vise le même numéro et porte déjà cette
+  combinaison, faire monter « Qualification du lead IA » d'un cran, plafonné à
+  *Appel sans réponse 4*. Sans numéro lisible des deux côtés, l'escalade ne se
+  déclenche pas.
 - **Supprimer**.
 
 **+ Ajouter depuis l'appel courant** crée une combinaison à partir de l'appel

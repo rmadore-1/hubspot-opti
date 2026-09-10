@@ -198,7 +198,7 @@
           <textarea id="script" readonly spellcheck="false" aria-label="Code source de LazyQ">// ==UserScript==
 // @name         LazyQ — qualification rapide d'appel HubSpot
 // @namespace    https://webdentiste.eu/
-// @version      2.5.0
+// @version      2.6.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -233,6 +233,7 @@
       id: 'repondeur-prospection',
       label: 'Répondeur / Prospection',
       visible: true,
+      autoASR: false,
       hotkey: { key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false },
       values: {
         "Type d'appel": 'Call Commercial : prospection',
@@ -679,6 +680,8 @@
       id: typeof id === 'string' ? id : uid(),
       label,
       hotkey: hotkey &amp;&amp; typeof hotkey.key === 'string' ? hotkey : null,
+      // Option d'escalade : absente vaut désactivée, jamais activée par défaut.
+      autoASR: preset.autoASR === true,
       // undefined est significatif ici : il distingue un enregistrement
       // antérieur à la visibilité d'un choix explicite de masquage.
       visible: typeof preset.visible === 'boolean' ? preset.visible : undefined,
@@ -1104,6 +1107,7 @@
         label: Object.values(values).join(' / ') || 'Nouvelle combinaison',
         hotkey: null,
         visible: false, // l'œil la fait apparaître en bas de page
+        autoASR: false,
         values,
       });
       savePresets();
@@ -1180,6 +1184,22 @@
       toast(`${preset.label} mis à jour`, 'success');
     }, 'Copier les valeurs de l\'appel ouvert dans cette combinaison');
 
+    const asr = document.createElement('label');
+    Object.assign(asr.style, {
+      display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+      font: '500 12px/1 var(--body)', color: '#33475b', padding: '5px 9px',
+      border: '1px solid ' + (preset.autoASR ? ORANGE : '#cbd6e2'),
+      borderRadius: '4px', background: '#fff', whiteSpace: 'nowrap',
+    });
+    asr.title = "Si l'appel précédent vise le même numéro et porte déjà cette "
+      + "combinaison, faire monter « " + CONFIG.asrField.name + " » d'un cran";
+    const asrBox = document.createElement('input');
+    asrBox.type = 'checkbox';
+    asrBox.checked = preset.autoASR === true;
+    asrBox.style.margin = '0';
+    asrBox.addEventListener('change', () => setPresetAutoASR(preset, asrBox.checked));
+    asr.append(asrBox, document.createTextNode('Auto ASR'));
+
     const remove = makeSmallButton('Supprimer', () => {
       presets = presets.filter((p) => p !== preset);
       if (!presets.length) presets = JSON.parse(JSON.stringify(CONFIG.defaultPresets));
@@ -1187,7 +1207,7 @@
     });
     remove.style.color = COLORS.error;
 
-    actions.append(eye, hotkeyBtn, absorb, remove);
+    actions.append(eye, hotkeyBtn, absorb, asr, remove);
     row.append(name, values, actions);
     return row;
   }
@@ -1201,6 +1221,11 @@
 
   function setPresetVisible(preset, visible) {
     preset.visible = visible;
+    savePresets();
+  }
+
+  function setPresetAutoASR(preset, enabled) {
+    preset.autoASR = enabled;
     savePresets();
   }
 
@@ -1461,7 +1486,7 @@
     probe, probeText, probeOptions, probeAnchor, timelineText, nodeSignature, trigger, runPreset, selectValue, actionsFor, findTrigger,
     findCallCards, cardInfo, samePhone, cardMatchesPreset, nextASRValue, phonesIn,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
-    describeHotkey, matchesHotkey, savePresets, setPresetVisible, toggleSettings,
+    describeHotkey, matchesHotkey, savePresets, setPresetVisible, setPresetAutoASR, toggleSettings,
     get presets() { return presets; },
     CONFIG,
   };
@@ -1507,7 +1532,7 @@
     <p class="warn">L'éditeur d'appel doit être ouvert — l'appel sélectionné et déplié dans la chronologie — avant de cliquer.</p>
   </section>
 
-  <footer>LazyQ v2.5.0</footer>
+  <footer>LazyQ v2.6.0</footer>
 </main>
 
 <script>

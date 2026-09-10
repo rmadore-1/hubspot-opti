@@ -210,7 +210,7 @@ check('la barre montre la combinaison visible et le bouton réglages',
   barButtons().length === 2 && barButtons()[0].textContent === 'Répondeur / Prospection',
   barButtons().map((b) => b.textContent).join(' | '));
 
-hs.presets.push({ id: 'second', label: 'Connecté / Relance', hotkey: null, visible: false, values: { "Type d'appel": 'Call Commercial : relance' } });
+hs.presets.push({ id: 'second', label: 'Connecté / Relance', hotkey: null, visible: false, autoASR: false, values: { "Type d'appel": 'Call Commercial : relance' } });
 hs.savePresets();
 check('une combinaison masquée n\'ajoute pas de bouton',
   barButtons().length === 2, barButtons().map((b) => b.textContent).join(' | '));
@@ -314,6 +314,25 @@ check('elle signale le niveau qui se répète',
   /article\.card[^\n]*niveau répété/.test(anchor),
   anchor.split('\n').find((l) => l.includes('article')) || '(aucune ligne article)');
 check('elle nomme la frame examinée', anchor.includes('frame principale'));
+
+// 16. Case Auto ASR : désactivée par défaut, persistée quand on la coche
+check('Auto ASR est désactivée sur la combinaison livrée',
+  hs.presets[0].autoASR === false, String(hs.presets[0].autoASR));
+
+const asrBoxes = () => [...window.document.querySelectorAll('[title^="Si l\'appel précédent"] input')];
+check('le panneau expose une case Auto ASR par combinaison',
+  asrBoxes().length === hs.presets.length, String(asrBoxes().length));
+check('la case reflète l\'état de la combinaison',
+  asrBoxes().every((box, i) => box.checked === hs.presets[i].autoASR));
+
+asrBoxes()[0].checked = true;
+asrBoxes()[0].dispatchEvent(new window.Event('change', { bubbles: true }));
+check('cocher la case active l\'option', hs.presets[0].autoASR === true);
+check('l\'option est mémorisée',
+  JSON.parse(window.localStorage.getItem('lazyQ.presets.v1'))[0].autoASR === true);
+
+hs.setPresetAutoASR(hs.presets[0], false);
+check('décocher la désactive', hs.presets[0].autoASR === false);
 
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {
