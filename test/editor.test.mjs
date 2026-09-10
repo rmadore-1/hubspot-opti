@@ -240,21 +240,22 @@ check('chaîné escalade 3 vers 4', hs.asrTarget('Appel sans réponse 3', true) 
 check('chaîné plafonne à 4', hs.asrTarget('Appel sans réponse 4', true) === 'Appel sans réponse 4');
 check('non chaîné pose le cran 1', hs.asrTarget('', false) === 'Appel sans réponse 1');
 check('non chaîné ramène un cran existant à 1', hs.asrTarget('Appel sans réponse 3', false) === 'Appel sans réponse 1');
-check('ne touche pas à une qualification étrangère, chaîné ou non',
-  hs.asrTarget('Rendez-vous pris', true) === null && hs.asrTarget('Essai IA', false) === null);
+check('écrase une qualification étrangère au lieu de s\'abstenir',
+  hs.asrTarget('Essai IA', false) === 'Appel sans réponse 1'
+  && hs.asrTarget('Rendez-vous pris', true) === 'Appel sans réponse 2',
+  `${hs.asrTarget('Essai IA', false)} / ${hs.asrTarget('Rendez-vous pris', true)}`);
 
-// « Essai IA » appartient à l'opérateur : Auto ASR doit s'abstenir.
+// « Essai IA » est écrasé : la propriété passe en édition et prend le cran.
 hs.setPresetAutoASR(hs.presets[0], true);
-const abstained = await hs.applyAutoASR(true);
-check('Auto ASR s\'abstient devant une qualification d\'opérateur',
-  /laissé intact/.test(abstained.note || ''), JSON.stringify(abstained));
-check('la qualification est restée Essai IA', hs.readPropertyValue(hs.findPropertyControl(hs.CONFIG.asrField.labels)) === 'Essai IA');
+const overwritten = await hs.applyAutoASR(false);
+await settle();
+check('Auto ASR écrase Essai IA par le cran 1',
+  el('asr-select')?.dataset.selected === 'Appel sans réponse 1',
+  JSON.stringify(overwritten) + ' / ' + el('asr-select')?.dataset.selected);
 
-// Qualification vide : l'escalade écrit, en passant la propriété en édition.
-doc.querySelector('[data-deferred-property-input-root] .value').textContent = '';
 const chainedRun = await hs.applyAutoASR(true);
 await settle();
-check('Auto ASR chaîné écrit le cran 2',
+check('Auto ASR chaîné monte ensuite au cran 2',
   el('asr-select')?.dataset.selected === 'Appel sans réponse 2',
   JSON.stringify(chainedRun) + ' / ' + el('asr-select')?.dataset.selected);
 check('la propriété est passée en mode édition',

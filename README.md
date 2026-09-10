@@ -98,11 +98,11 @@ Le panneau ⚙️ liste les combinaisons. Pour chacune :
   | vide | *Appel sans réponse 2* | *Appel sans réponse 1* |
   | *Appel sans réponse 2* | 3 | 1 |
   | *Appel sans réponse 4* | 4 | 1 |
-  | autre chose | intacte | intacte |
+  | *Essai IA*, ou toute autre valeur | 2 | 1 |
 
-  Le seul cas où LazyQ n'écrit rien est une **qualification déjà renseignée
-  avec autre chose qu'un « appel sans réponse »** : c'est le travail de
-  l'opérateur, LazyQ ne l'écrase pas.
+  Lancer une combinaison **écrase toujours** la qualification en place. Une
+  valeur étrangère à l'échelle ne porte aucun cran : elle compte pour le
+  premier, d'où le 2 en cas de chaînage.
 - **Supprimer**.
 
 **+ Ajouter depuis l'appel courant** crée une combinaison à partir de l'appel

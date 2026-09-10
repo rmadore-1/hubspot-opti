@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LazyQ — qualification rapide d'appel HubSpot
 // @namespace    https://webdentiste.eu/
-// @version      3.0.0
+// @version      3.1.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -372,22 +372,19 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Qualification à écrire, ou null s'il ne faut rien écrire.
+   * Qualification à écrire. Lancer une combinaison écrase toujours la valeur
+   * en place, quelle qu'elle soit.
    *
    * `chained` dit si l'appel précédent est comparable — même numéro et même
    * catégorisation. Sans chaînage, l'appel est une première tentative et vaut
-   * le cran 1 ; avec chaînage on monte d'un cran depuis la valeur courante, et
-   * on plafonne. Une qualification déjà renseignée avec autre chose qu'un
-   * « appel sans réponse » appartient à l'opérateur : on n'y touche pas.
-   * Fonction pure, testée isolément.
+   * le cran 1. Avec chaînage on monte d'un cran depuis la valeur courante, et
+   * on plafonne ; une valeur étrangère à l'échelle ne porte aucun cran, elle
+   * compte donc pour le premier. Fonction pure, testée isolément.
    */
   function asrTarget(current, chained, field = CONFIG.asrField) {
-    const value = norm(current || '');
-    const match = value.match(new RegExp(norm(field.prefix) + '\\s*(\\d*)'));
-
-    if (!match && value) return null;
     if (!chained) return `${field.prefix} 1`;
 
+    const match = norm(current || '').match(new RegExp(norm(field.prefix) + '\\s*(\\d*)'));
     const rank = match ? (Number(match[1]) || 1) : 1;
     return `${field.prefix} ${Math.min(rank + 1, field.max)}`;
   }
@@ -657,11 +654,7 @@
     const control = findPropertyControl(field.labels);
     if (!control) return { why: `${field.name} introuvable — escalade ignorée` };
 
-    const current = readPropertyValue(control);
-    const target = asrTarget(current, chained);
-    if (!target) {
-      return { note: `${field.name} : « ${current} » posé par un opérateur, laissé intact` };
-    }
+    const target = asrTarget(readPropertyValue(control), chained);
 
     report('pending', `… ${field.name}`);
     const result = await setPropertyValue(field, target);
@@ -1321,10 +1314,8 @@
     if (asr) {
       const current = readPropertyValue(asr);
       lines.push(`    valeur actuelle = "${current}"`);
-      const chained = asrTarget(current, true);
-      const alone = asrTarget(current, false);
-      lines.push(`    si l'appel d'avant correspond  = ${chained ? `"${chained}"` : 'AUCUNE — qualification étrangère'}`);
-      lines.push(`    sinon                          = ${alone ? `"${alone}"` : 'AUCUNE — qualification étrangère'}`);
+      lines.push(`    si l'appel d'avant correspond  = "${asrTarget(current, true)}"`);
+      lines.push(`    sinon                          = "${asrTarget(current, false)}"`);
     }
 
     return lines.join('\n');
