@@ -1,5 +1,5 @@
 // Généré par scripts/build-extension.mjs — ne pas modifier à la main.
-// Source : userscript/lazyq.user.js (v2.8.0)
+// Source : userscript/lazyq.user.js (v3.0.0)
 
 // L'app HubSpot est un assemblage d'iframes : la fiche contact et le widget
 // d'appel (/calling/.../twilio) sont des documents distincts. Le script est
@@ -47,15 +47,18 @@
     // Repérage des cartes d'appel dans la chronologie. `cardSelectors` est
     // essayé dans l'ordre ; le premier qui donne des cartes gagne.
     timeline: {
-      cardSelectors: [
-        '[data-test-id*="timeline-item"]',
-        '[data-selenium-test*="timeline-item"]',
-        '[class*="timelineItem"]',
-        '[class*="TimelineItem"]',
-        '[class*="timeline"] li',
-        '[data-test-id*="activity-item"]',
+      // Chaque activité de la chronologie porte cette ancre. La carte complète
+      // est un ancêtre : on remonte depuis l'ancre plutôt que de figer un
+      // niveau, les classes de HubSpot étant des hachages instables.
+      eventAnchors: [
+        '[data-test-id="timeline-preview-event"]',
+        '[data-test-id="generic-preview-event-header"]',
       ],
-      // HubSpot trie les activités du plus récent au plus ancien par défaut.
+      // Remontée maximale depuis l'ancre pour englober la carte entière : on
+      // vise le bloc d'accordéon, qui porte l'aperçu et l'éditeur déplié.
+      maxClimb: 8,
+      maxCardChars: 5000,
+      // Ordre supposé si les dates ne sont pas lisibles.
       newestFirst: true,
     },
 
@@ -149,10 +152,10 @@
   ];
 
   /** Noeuds de texte qui ressemblent au libellé d'un des `names`. */
-  function findLabelNodes(names) {
+  function findLabelNodes(names, root = document) {
     const wanted = names.map(norm);
     const out = [];
-    for (const node of document.querySelectorAll('label, span, div, legend, h4, h5')) {
+    for (const node of root.querySelectorAll('label, span, div, legend, h4, h5')) {
       if (node.children.length > 2) continue; // une feuille de texte, pas un conteneur
       const text = norm(node.textContent);
       if (!text || text.length > 60) continue;
@@ -180,8 +183,8 @@
     return null;
   }
 
-  function findTrigger(names) {
-    for (const label of findLabelNodes(names)) {
+  function findTrigger(names, root = document) {
+    for (const label of findLabelNodes(names, root)) {
       const trigger = triggerNear(label);
       if (trigger) return { trigger, label };
     }
@@ -227,9 +230,13 @@
   // continue de lire l'appel affiché — on absorbe ce qu'on voit.
   // ---------------------------------------------------------------------------
 
-  // Numéros français et internationaux. Les séparateurs admis excluent « / »
-  // et « : » pour ne pas capturer les dates et les heures des cartes.
-  const PHONE_RE = /(?:\+\d{1,3}[\s.\-]?)?(?:\d[\s.\-]?){8,14}\d/g;
+  // Numéros français et internationaux.
+  const PHONE_RE = /(?:\+\d{1,3}[\s.\-]?)?(?:\d[\s.\-]?){8,13}\d/g;
+
+  // « 10 sept. 2026 à 11:53 » colle au numéro dans le texte d'une carte, et
+  // l'espace étant un séparateur admis, le 10 se retrouvait aspiré dans le
+  // numéro. On retire donc les dates avant de chercher.
+  const DATE_RE = /\d{1,2}\s+[a-zéûà]+\.?\s+\d{4}(?:\s+à\s+\d{1,2}:\d{2})?/gi;
 
   /** Les 9 derniers chiffres : compare un 06… avec un +336… sans faux négatif. */
   function phoneKey(raw) {
@@ -238,26 +245,64 @@
   }
 
   function phonesIn(text) {
-    return [...new Set((text.match(PHONE_RE) || []).map(phoneKey).filter(Boolean))];
+    const withoutDates = (text || '').replace(DATE_RE, ' ');
+    return [...new Set((withoutDates.match(PHONE_RE) || []).map(phoneKey).filter(Boolean))];
+  }
+
+  const MONTHS = ['janv', 'fevr', 'mars', 'avr', 'mai', 'juin', 'juil', 'aout', 'sept', 'oct', 'nov', 'dec'];
+
+  /** Horodatage d'une carte, ou null : « 10 sept. 2026 à 11:53 ». */
+  function cardDate(text) {
+    const match = norm(text).match(/(\d{1,2})\s+([a-z]+)\.?\s+(\d{4})(?:\s+a\s+(\d{1,2}):(\d{2}))?/);
+    if (!match) return null;
+    const month = MONTHS.findIndex((name) => match[2].startsWith(name));
+    if (month < 0) return null;
+    return new Date(Number(match[3]), month, Number(match[1]), Number(match[4] || 0), Number(match[5] || 0)).getTime();
+  }
+
+  /**
+   * Remonte de l'ancre d'événement jusqu'à la carte complète : on s'arrête dès
+   * que le noeud contient un numéro, et jamais au point d'englober un autre
+   * événement — ce qui ferait passer deux appels pour un seul.
+   */
+  function cardRoot(anchor, anchors) {
+    let node = anchor;
+    for (let climb = 0; climb < CONFIG.timeline.maxClimb; climb += 1) {
+      const parent = node.parentElement;
+      if (!parent) break;
+      // Ne jamais englober un autre événement : deux appels passeraient pour un.
+      if (anchors.some((other) => other !== anchor && parent.contains(other))) break;
+      // Garde-fou quand la fiche ne porte qu'un appel : sans autre ancre pour
+      // arrêter la remontée, on finirait par prendre la page entière.
+      if ((parent.textContent || '').length > CONFIG.timeline.maxCardChars) break;
+      node = parent;
+    }
+    return node;
   }
 
   /** Cartes d'appel de la chronologie, de la plus récente à la plus ancienne. */
   function findCallCards() {
-    for (const selector of CONFIG.timeline.cardSelectors) {
-      let cards;
-      try { cards = [...document.querySelectorAll(selector)]; } catch (_) { continue; }
+    for (const selector of CONFIG.timeline.eventAnchors) {
+      let anchors;
+      try { anchors = [...document.querySelectorAll(selector)].filter(isVisible); } catch (_) { continue; }
+      if (!anchors.length) continue;
 
-      cards = cards.filter((el) => {
-        if (!isVisible(el)) return false;
-        const text = norm(el.textContent);
-        return text.length > 10 && text.length < 3000 && /\bappel|\bcall\b/.test(text);
-      });
+      const cards = [];
+      for (const anchor of anchors) {
+        // La chronologie mêle appels, e-mails et notes : on ne garde que les appels.
+        if (!/\bappel\b|\bcall\b/.test(norm(anchor.textContent))) continue;
+        const card = cardRoot(anchor, anchors);
+        if (!cards.includes(card)) cards.push(card);
+      }
+      if (!cards.length) continue;
 
-      // Les sélecteurs larges remontent la carte et ses enveloppes : on ne garde
-      // que les plus internes, sinon « l'appel d'avant » serait un conteneur.
-      cards = cards.filter((el) => !cards.some((other) => other !== el && el.contains(other)));
-
-      if (cards.length) return CONFIG.timeline.newestFirst ? cards : cards.reverse();
+      // Les dates priment sur l'ordre du DOM quand elles sont lisibles : se
+      // tromper de « dernier appel » est la pire erreur possible ici.
+      const dated = cards.map((card) => ({ card, at: cardDate(card.textContent) }));
+      if (dated.every((entry) => entry.at !== null)) {
+        return dated.sort((a, b) => b.at - a.at).map((entry) => entry.card);
+      }
+      return CONFIG.timeline.newestFirst ? cards : cards.reverse();
     }
     return [];
   }
@@ -273,19 +318,44 @@
       && a.phones.some((phone) => b.phones.includes(phone));
   }
 
-  /** La carte porte-t-elle déjà les valeurs de la combinaison ? */
+  /**
+   * La carte porte-t-elle la catégorisation de la combinaison ?
+   *
+   * L'aperçu replié n'affiche que le résultat de l'appel — « Appel - Connecté »,
+   * « Appel - Répondeur/Pas de réponse » — jamais le type. Exiger toutes les
+   * valeurs rendrait donc le chaînage systématiquement faux : une seule suffit,
+   * et c'est le résultat qui discrimine en pratique.
+   */
   function cardMatchesPreset(info, preset) {
     const text = norm(info.text);
-    const values = Object.values(preset.values);
-    return values.length > 0 && values.every((value) => text.includes(norm(value)));
+    return Object.values(preset.values).some((value) => text.includes(norm(value)));
   }
 
-  /** Ouvre une carte pour faire apparaître son éditeur. */
-  async function openCard(card) {
-    const clickable = [...card.querySelectorAll('button, a, [role="button"]')]
-      .find((el) => isVisible(el) && norm(el.textContent).length > 3);
-    realClick(clickable || card);
-    await sleep(400);
+  /** La carte est-elle dépliée, c'est-à-dire ses champs sont-ils présents ? */
+  function cardIsOpen(card, preset) {
+    return Object.keys(preset.values).every((name) => {
+      const field = fieldByName(name);
+      return field && findLabelNodes(field.labels, card).length > 0;
+    });
+  }
+
+  /**
+   * Déplie la carte si besoin. Une carte déjà ouverte n'est pas recliquée :
+   * l'accordéon se refermerait.
+   */
+  async function ensureCardOpen(card, preset) {
+    if (cardIsOpen(card, preset)) return card;
+
+    const toggle = [...card.querySelectorAll('[role="button"], button, [aria-expanded]')]
+      .find(isVisible) || card;
+    realClick(toggle);
+
+    // React remonte la carte : on la retrouve par sa position plutôt que de
+    // garder une référence morte.
+    return waitFor(() => {
+      const again = findCallCards()[0];
+      return again && cardIsOpen(again, preset) ? again : null;
+    }, 3000);
   }
 
   // ---------------------------------------------------------------------------
@@ -346,18 +416,33 @@
   }
 
   /** Ouvre le champ, sélectionne l'option, vérifie que la valeur a pris. */
-  async function selectValue(action) {
-    const found = findTrigger(action.field);
+  async function selectValue(action, root = document) {
+    const found = findTrigger(action.field, root);
     if (!found) return { ok: false, why: `champ introuvable : ${action.name}` };
-    const { trigger } = found;
+    return pickOption({
+      trigger: found.trigger,
+      value: action.value,
+      name: action.name,
+      // Relire par le libellé plutôt que garder le noeud : React le remplace.
+      reread: () => {
+        const again = findTrigger(action.field, root);
+        return again ? readValue(again.trigger) : '';
+      },
+    });
+  }
 
-    if (norm(readValue(trigger)).includes(norm(action.value))) {
-      return { ok: true, note: `${action.name} déjà à la bonne valeur` };
+  /**
+   * Mécanique commune à tous les menus, quel que soit le moyen d'avoir obtenu
+   * le déclencheur : champ d'éditeur d'appel ou propriété de la barre latérale.
+   */
+  async function pickOption({ trigger, value, name, reread }) {
+    if (norm(readValue(trigger)).includes(norm(value))) {
+      return { ok: true, note: `${name} déjà à la bonne valeur` };
     }
 
     if (trigger.tagName === 'SELECT') {
-      const option = [...trigger.options].find((o) => norm(o.textContent) === norm(action.value));
-      if (!option) return { ok: false, why: `option absente du <select> : ${action.value}` };
+      const option = [...trigger.options].find((o) => norm(o.textContent) === norm(value));
+      if (!option) return { ok: false, why: `option absente du <select> : ${value}` };
       trigger.value = option.value;
       trigger.dispatchEvent(new Event('change', { bubbles: true }));
       return { ok: true };
@@ -377,7 +462,7 @@
       await sleep(250);
 
       const fresh = (broad) => optionNodes(broad).filter((el) => !optionsBefore.has(el));
-      const look = () => matchOption(fresh(false), action.value) || matchOption(fresh(true), action.value);
+      const look = () => matchOption(fresh(false), value) || matchOption(fresh(true), value);
 
       if (look()) return look();
 
@@ -386,7 +471,7 @@
         .find((i) => !inputsBefore.has(i) && isVisible(i))
         || (trigger.tagName === 'INPUT' ? trigger : null);
       if (searchInput) {
-        setReactValue(searchInput, action.value);
+        setReactValue(searchInput, value);
         await sleep(350);
       }
       return waitFor(look);
@@ -403,21 +488,76 @@
       if (optionNodes(true).length > baseline) {
         document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       }
-      return { ok: false, why: `option introuvable : « ${action.value} » (${action.name})` };
+      return { ok: false, why: `option introuvable : « ${value} » (${name})` };
     }
 
     realClick(option);
 
-    // React remonte souvent un nouveau noeud : on relit le champ plutôt que de
-    // garder la référence d'avant le clic.
-    const confirmed = await waitFor(() => {
-      const again = findTrigger(action.field);
-      return again && norm(readValue(again.trigger)).includes(norm(action.value)) ? true : null;
-    }, 2000);
+    const confirmed = await waitFor(
+      () => (norm(reread()).includes(norm(value)) ? true : null), 2000);
 
     return confirmed
       ? { ok: true }
-      : { ok: true, unverified: true, why: `${action.name} : option cliquée, valeur non confirmée` };
+      : { ok: true, unverified: true, why: `${name} : option cliquée, valeur non confirmée` };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Propriétés différées de la barre latérale
+  //
+  // Une propriété comme « Qualification du lead IA » n'est pas un menu : c'est
+  // un affichage en lecture seule (mode="display", role="button") qui ne devient
+  // un vrai champ qu'une fois cliqué. D'où un chemin distinct des champs de
+  // l'éditeur d'appel.
+  // ---------------------------------------------------------------------------
+
+  const PROPERTY_ROOT = '[data-deferred-property-input-root]';
+
+  function findPropertyControl(labels) {
+    for (const label of findLabelNodes(labels)) {
+      const root = label.closest ? label.closest(PROPERTY_ROOT) : null;
+      if (root && isVisible(root)) return root;
+    }
+    return null;
+  }
+
+  /** Valeur affichée : le texte du bloc moins celui de son libellé. */
+  function readPropertyValue(root) {
+    const clean = (node) => ((node && node.textContent) || '').replace(/\s+/g, ' ').trim();
+    const full = clean(root);
+    const label = clean(root.querySelector('label'));
+    return label && full.startsWith(label) ? full.slice(label.length).trim() : full;
+  }
+
+  async function setPropertyValue(field, value) {
+    let root = findPropertyControl(field.labels);
+    if (!root) return { ok: false, why: `propriété introuvable : ${field.name}` };
+
+    if (norm(readPropertyValue(root)).includes(norm(value))) {
+      return { ok: true, note: `${field.name} déjà à la bonne valeur` };
+    }
+
+    if (root.getAttribute('data-deferred-property-input-mode') !== 'edit') {
+      realClick(root);
+      await sleep(350);
+    }
+
+    const trigger = await waitFor(() => {
+      const live = findPropertyControl(field.labels) || root;
+      return [...live.querySelectorAll('[role="combobox"], button[aria-haspopup], select, input:not([type="hidden"])')]
+        .find(isVisible) || null;
+    }, 2000);
+
+    if (!trigger) return { ok: false, why: `${field.name} : passage en édition impossible` };
+
+    return pickOption({
+      trigger,
+      value,
+      name: field.name,
+      reread: () => {
+        const live = findPropertyControl(field.labels);
+        return live ? readPropertyValue(live) : '';
+      },
+    });
   }
 
   async function save() {
@@ -446,10 +586,31 @@
     if (running) return;
     running = true;
     try {
+      // 1. La combinaison vise le dernier appel, pas celui qui se trouve ouvert.
+      const cards = findCallCards();
+      if (!cards.length) {
+        report('error', 'Aucun appel trouvé dans la chronologie');
+        return;
+      }
+
+      // Photographier avant d'ouvrir : le dépliage re-rend la chronologie.
+      const last = cardInfo(cards[0]);
+      const previous = cards[1] ? cardInfo(cards[1]) : null;
+      const chained = !!previous && samePhone(last, previous) && cardMatchesPreset(previous, preset);
+
+      report('pending', 'Ouverture du dernier appel…');
+      const card = await ensureCardOpen(cards[0], preset);
+      if (!card) {
+        report('error', "Le dernier appel ne s'ouvre pas — champs introuvables");
+        return;
+      }
+
+      // 2. Les valeurs sont cherchées dans la carte, pas dans la page : un autre
+      // appel déplié ailleurs ne doit pas être rempli à sa place.
       const warnings = [];
       for (const action of actionsFor(preset)) {
         report('pending', `… ${action.name}`);
-        const result = await selectValue(action);
+        const result = await selectValue(action, card);
         if (!result.ok) {
           console.warn('[LazyQ]', result.why);
           report('error', `Échec — ${result.why}`);
@@ -458,10 +619,19 @@
         if (result.why) { console.warn('[LazyQ]', result.why); warnings.push(result.why); }
         if (result.note) console.info('[LazyQ]', result.note);
       }
+
+      // 3. Escalade de la qualification, si l'option est cochée.
+      if (preset.autoASR) {
+        const outcome = await applyAutoASR(chained);
+        if (outcome.why) warnings.push(outcome.why);
+        if (outcome.note) console.info('[LazyQ]', outcome.note);
+      }
+
       if (CONFIG.autoSave && !(await save())) {
         report('error', 'Champs remplis, mais bouton Enregistrer introuvable');
         return;
       }
+
       report(warnings.length ? 'error' : 'success',
         warnings.length ? `À vérifier — ${warnings.join(' ; ')}` : `${preset.label} appliqué`);
     } catch (err) {
@@ -470,6 +640,24 @@
     } finally {
       running = false;
     }
+  }
+
+  /** Fait monter la qualification d'un cran, ou pose le premier barreau. */
+  async function applyAutoASR(chained) {
+    const field = CONFIG.asrField;
+    const control = findPropertyControl(field.labels);
+    if (!control) return { why: `${field.name} introuvable — escalade ignorée` };
+
+    const current = readPropertyValue(control);
+    const target = asrTarget(current, chained);
+    if (!target) {
+      return { note: `${field.name} : « ${current} » posé par un opérateur, laissé intact` };
+    }
+
+    report('pending', `… ${field.name}`);
+    const result = await setPropertyValue(field, target);
+    if (!result.ok) return { why: result.why };
+    return { why: result.unverified ? result.why : undefined, note: result.note || `${field.name} → ${target}` };
   }
 
   // ---------------------------------------------------------------------------
@@ -570,7 +758,9 @@
     switch (msg.type) {
       case 'run':
         // Seule la frame qui porte les champs se déclare et exécute.
-        if (hasFieldsFor(msg.preset)) {
+        // La chronologie suffit : les champs n'existent qu'une fois l'appel
+        // déplié, donc les exiger d'avance empêcherait toute exécution.
+        if (findCallCards().length > 0 || hasFieldsFor(msg.preset)) {
           toTop({ type: 'claim' });
           runPreset(msg.preset);
         }
@@ -1089,10 +1279,10 @@
   function timelineText() {
     const lines = ['--- CHRONOLOGIE ---'];
 
-    for (const selector of CONFIG.timeline.cardSelectors) {
+    for (const selector of CONFIG.timeline.eventAnchors) {
       let raw = [];
       try { raw = [...document.querySelectorAll(selector)]; } catch (_) { /* sélecteur refusé */ }
-      lines.push(`Sélecteur ${selector} — ${raw.length} élément(s) bruts`);
+      lines.push(`Ancre ${selector} — ${raw.length} événement(s)`);
     }
 
     const cards = findCallCards();
@@ -1100,7 +1290,8 @@
 
     cards.slice(0, 6).forEach((card, index) => {
       const info = cardInfo(card);
-      lines.push(`  Carte ${index + 1} ${describe(card).split('"')[0]}`);
+      lines.push(`  Carte ${index + 1} ${nodeSignature(card)}`);
+      lines.push(`    date lue : ${cardDate(info.text) ? new Date(cardDate(info.text)).toISOString() : 'AUCUNE'}`);
       lines.push(`    téléphones détectés : ${info.phones.join(', ') || 'AUCUN'}`);
       lines.push(`    texte : "${info.text.slice(0, 220)}"`);
     });
@@ -1116,10 +1307,10 @@
       }
     }
 
-    const asr = findTrigger(CONFIG.asrField.labels);
-    lines.push(`Champ « ${CONFIG.asrField.name} » : ${asr ? describe(asr.trigger) : 'INTROUVABLE'}`);
+    const asr = findPropertyControl(CONFIG.asrField.labels);
+    lines.push(`Propriété « ${CONFIG.asrField.name} » : ${asr ? nodeSignature(asr) : 'INTROUVABLE'}`);
     if (asr) {
-      const current = readValue(asr.trigger).trim();
+      const current = readPropertyValue(asr);
       lines.push(`    valeur actuelle = "${current}"`);
       const chained = asrTarget(current, true);
       const alone = asrTarget(current, false);
@@ -1291,7 +1482,8 @@
 
   window.lazyQ = {
     probe, probeText, probeOptions, probeAnchor, timelineText, nodeSignature, trigger, runPreset, selectValue, actionsFor, findTrigger,
-    findCallCards, cardInfo, samePhone, cardMatchesPreset, asrTarget, phonesIn,
+    findCallCards, cardInfo, cardDate, cardIsOpen, ensureCardOpen, samePhone, cardMatchesPreset,
+    asrTarget, phonesIn, findPropertyControl, readPropertyValue, setPropertyValue, applyAutoASR,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
     describeHotkey, matchesHotkey, savePresets, setPresetVisible, setPresetAutoASR, toggleSettings,
     get presets() { return presets; },

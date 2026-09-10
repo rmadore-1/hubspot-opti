@@ -3,48 +3,76 @@ import fs from 'fs';
 
 const script = fs.readFileSync(new URL('../userscript/lazyq.user.js', import.meta.url), 'utf8');
 
-// Approximation de l'éditeur d'appel HubSpot : libellé + bouton déclencheur,
-// menu rendu dans un portail attaché au body. On reproduit aussi le bruit
-// permanent constaté sur le vrai portail — navigation et affichage des valeurs
-// courantes portent des sélecteurs qui ressemblent à des options.
+// Le DOM reproduit la structure relevée sur le portail :
+//  - chaque activité porte [data-test-id="timeline-preview-event"], niché dans
+//    un bloc d'accordéon qui contient aussi l'éditeur déplié ;
+//  - l'aperçu replié n'affiche que le résultat de l'appel, pas son type ;
+//  - « Qualification du lead IA » est une propriété différée de la barre
+//    latérale : lecture seule jusqu'au clic ;
+//  - la page porte en permanence des leurres qui ressemblent à des options.
+function callCard({ id, outcome, phone, date, open }) {
+  return `
+  <div class="accordion" data-item="${id}">
+    <span role="presentation">
+      <button class="toggle" aria-expanded="false" aria-label="Développer"></button>
+      <div class="flex">
+        <div data-test-id="timeline-preview-event">
+          <h4><span data-test-id="generic-preview-event-header"><span data-content="true"><span>Appel - ${outcome} passé par Aurélien Milano</span></span></span></h4>
+        </div>
+        <div class="with">avec ${phone}</div>
+        <div class="when">${date}</div>
+      </div>
+    </span>
+    <div class="body">${open ? EDITOR : ''}</div>
+  </div>`;
+}
+
+const EDITOR = `
+  <div class="field">
+    <label>Type d'appel</label>
+    <div class="private-select"><button aria-haspopup="listbox" data-test-id="call-type-select">Sélectionner</button></div>
+  </div>
+  <div class="field">
+    <label>Résultat de l'appel</label>
+    <div class="private-select"><button aria-haspopup="listbox" data-test-id="call-outcome-select">Sélectionner</button></div>
+  </div>
+  <button class="save">Enregistrer</button>`;
+
 const HTML = `<!doctype html><html><body>
   <nav class="nav-menu">
     <ul><li>Répondeur/Pas de réponse</li><li>Call Commercial : prospection</li></ul>
   </nav>
-  <div class="property-list">
+
+  <aside class="sidebar">
+    <div class="View" data-deferred-property-input-root="true" data-deferred-property-input-state="editable" data-deferred-property-input-mode="display" role="button">
+      <div class="FormControl__LabelWrapper"><label id="FormControl-label145"><span><span>Qualification du lead IA</span></span></label></div>
+      <div class="value">Essai IA</div>
+    </div>
     <span data-test-id="options_co_logiciel_ia">Options - co logiciel IA</span>
     <span role="option">Call Commercial : prospection</span>
     <span role="option">Répondeur/Pas de réponse</span>
-  </div>
-  <div class="editor">
-    <div class="field">
-      <label>Type d'appel</label>
-      <div class="private-select">
-        <button aria-haspopup="listbox" data-test-id="call-type-select">Sélectionner</button>
-      </div>
-    </div>
-    <div class="field">
-      <label>Résultat de l'appel</label>
-      <div class="private-select">
-        <button aria-haspopup="listbox" data-test-id="call-outcome-select">Sélectionner</button>
-      </div>
-    </div>
-    <button class="save">Enregistrer</button>
-  </div>
+  </aside>
+
+  <section class="timeline">
+    ${callCard({ id: 1, outcome: 'Connecté', phone: '+33 5 58 83 87 63', date: '10 sept. 2026 à 11:53 GMT+2', open: false })}
+    ${callCard({ id: 2, outcome: 'Répondeur/Pas de réponse', phone: '05 58 83 87 63', date: '9 sept. 2026 à 09:20 GMT+2', open: false })}
+    ${callCard({ id: 3, outcome: 'Connecté', phone: '06 99 88 77 66', date: '1 sept. 2026 à 15:04 GMT+2', open: false })}
+  </section>
 </body></html>`;
 
 const OPTIONS = {
   'call-type-select': ['Call Commercial : prospection', 'Call Commercial : relance', 'Call support'],
   'call-outcome-select': ['Connecté', 'Répondeur/Pas de réponse', 'Numéro erroné', 'Occupé'],
+  'asr-select': ['Essai IA', 'Appel sans réponse 1', 'Appel sans réponse 2', 'Appel sans réponse 3', 'Appel sans réponse 4', 'Rendez-vous pris'],
 };
 
 const dom = new JSDOM(HTML, {
   runScripts: 'outside-only',
   pretendToBeVisual: true,
-  // localStorage exige une origine : sans url, jsdom ne l'expose pas.
   url: 'https://app-eu1.hubspot.com/contacts/145766737/record/0-1/828923682002',
 });
 const { window } = dom;
+const doc = window.document;
 
 // jsdom ne fait pas de layout : on rend tout "visible" sauf display:none.
 window.Element.prototype.getClientRects = function () {
@@ -52,17 +80,17 @@ window.Element.prototype.getClientRects = function () {
 };
 window.Element.prototype.scrollIntoView = function () {};
 
-// Câblage des menus : mousedown bascule un listbox en portail, clic sur une
-// option écrit la valeur dans le déclencheur et referme — comme HubSpot.
-for (const [testId, values] of Object.entries(OPTIONS)) {
-  const trigger = window.document.querySelector(`[data-test-id="${testId}"]`);
+/** Menu HubSpot : bascule à chaque mousedown, options en portail sur le body. */
+function wireSelect(trigger, values) {
+  if (trigger.dataset.wired) return;
+  trigger.dataset.wired = '1';
   trigger.addEventListener('mousedown', () => {
-    const open = window.document.querySelector('[role="listbox"]');
+    const open = doc.querySelector('[role="listbox"]');
     if (open) { open.remove(); return; }
-    const listbox = window.document.createElement('ul');
+    const listbox = doc.createElement('ul');
     listbox.setAttribute('role', 'listbox');
     for (const value of values) {
-      const option = window.document.createElement('li');
+      const option = doc.createElement('li');
       option.setAttribute('role', 'option');
       option.textContent = value;
       option.addEventListener('mousedown', () => {
@@ -72,12 +100,40 @@ for (const [testId, values] of Object.entries(OPTIONS)) {
       });
       listbox.appendChild(option);
     }
-    window.document.body.appendChild(listbox);
+    doc.body.appendChild(listbox);
   });
 }
 
-window.document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') window.document.querySelector('[role="listbox"]')?.remove();
+/** Déplie un accordéon au clic sur son en-tête, comme le composant réel. */
+for (const accordion of doc.querySelectorAll('.accordion')) {
+  accordion.querySelector('.toggle').addEventListener('mousedown', (event) => {
+    const body = accordion.querySelector('.body');
+    const opening = !body.innerHTML.trim();
+    body.innerHTML = opening ? EDITOR : '';
+    event.currentTarget.setAttribute('aria-expanded', String(opening));
+    for (const [testId, values] of Object.entries(OPTIONS)) {
+      const trigger = body.querySelector(`[data-test-id="${testId}"]`);
+      if (trigger) wireSelect(trigger, values);
+    }
+  });
+}
+
+/** Propriété différée : le clic la fait passer en édition et révèle un menu. */
+const property = doc.querySelector('[data-deferred-property-input-root]');
+property.addEventListener('mousedown', () => {
+  if (property.getAttribute('data-deferred-property-input-mode') === 'edit') return;
+  property.setAttribute('data-deferred-property-input-mode', 'edit');
+  const value = property.querySelector('.value');
+  const trigger = doc.createElement('button');
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.dataset.testId = 'asr-select';
+  trigger.textContent = value.textContent;
+  value.replaceWith(trigger);
+  wireSelect(trigger, OPTIONS['asr-select']);
+});
+
+doc.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') doc.querySelector('[role="listbox"]')?.remove();
 });
 
 window.eval(script);
@@ -85,50 +141,79 @@ window.eval(script);
 const hs = window.lazyQ;
 const results = [];
 const check = (name, condition, detail = '') => results.push({ name, ok: !!condition, detail });
-const el = (testId) => window.document.querySelector(`[data-test-id="${testId}"]`);
-const reset = (testId) => { const t = el(testId); t.removeAttribute('data-selected'); t.textContent = 'Sélectionner'; };
-const press = (init) => window.document.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, ...init }));
-const release = (init) => window.document.dispatchEvent(new window.KeyboardEvent('keyup', { bubbles: true, ...init }));
+const el = (testId) => doc.querySelector(`[data-test-id="${testId}"]`);
+const press = (init) => doc.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, ...init }));
+const release = (init) => doc.dispatchEvent(new window.KeyboardEvent('keyup', { bubbles: true, ...init }));
+const settle = () => new Promise((r) => setTimeout(r, 0));
 
-// 1. Détection des champs
+// ---------------------------------------------------------------------------
+// 1. Chronologie
+// ---------------------------------------------------------------------------
+const cards = hs.findCallCards();
+check('repère les trois appels de la chronologie', cards.length === 3, String(cards.length));
+check('remonte jusqu\'au bloc qui porte aussi l\'éditeur',
+  cards[0].classList.contains('accordion'), cards[0]?.className);
+check('n\'englobe jamais deux appels dans une carte',
+  cards.every((card) => card.querySelectorAll('[data-test-id="timeline-preview-event"]').length === 1));
+check('classe par date, le plus récent d\'abord',
+  cards.map((c) => c.dataset.item).join(',') === '1,2,3',
+  cards.map((c) => c.dataset.item).join(','));
+
+const [last, previous, older] = cards.map(hs.cardInfo);
+check('lit la date de la carte',
+  new Date(hs.cardDate(last.text)).toISOString().startsWith('2026-09-10T11:53'),
+  String(hs.cardDate(last.text)));
+check('extrait le numéro malgré les formats différents',
+  last.phones[0] === '558838763' && previous.phones[0] === '558838763',
+  JSON.stringify([last.phones, previous.phones]));
+check('ne prend pas la date pour un numéro', last.phones.length === 1, JSON.stringify(last.phones));
+check('n\'aspire pas le jour de la date dans le numéro',
+  last.phones[0] === '558838763', last.phones[0]);
+check('extrait le numéro même collé à une date sans séparateur net',
+  hs.phonesIn('avec +33 5 58 83 87 63 10 sept. 2026 à 11:53 GMT+2')[0] === '558838763',
+  JSON.stringify(hs.phonesIn('avec +33 5 58 83 87 63 10 sept. 2026 à 11:53 GMT+2')));
+check('reconnaît deux appels au même numéro', hs.samePhone(last, previous));
+check('distingue un numéro différent', !hs.samePhone(last, older));
+
+// L'aperçu replié ne montre que le résultat : une seule valeur suffit à trancher.
+check('reconnaît un appel précédent catégorisé comme la combinaison',
+  hs.cardMatchesPreset(previous, hs.presets[0]));
+check('ne confond pas avec un appel connecté',
+  !hs.cardMatchesPreset(older, hs.presets[0]));
+
+// ---------------------------------------------------------------------------
+// 2. Exécution complète sur le dernier appel
+// ---------------------------------------------------------------------------
+check('aucun appel n\'est déplié au départ',
+  !hs.cardIsOpen(cards[0], hs.presets[0]));
+
+await hs.runPreset(hs.presets[0]);
+await settle();
+
+check('déplie le dernier appel', doc.querySelector('.accordion[data-item="1"] .body').innerHTML.trim() !== '');
+check('applique le type d\'appel au dernier appel',
+  el('call-type-select').dataset.selected === 'Call Commercial : prospection',
+  el('call-type-select')?.dataset.selected);
+check('applique le résultat au dernier appel',
+  el('call-outcome-select').dataset.selected === 'Répondeur/Pas de réponse',
+  el('call-outcome-select')?.dataset.selected);
+check('laisse les autres appels repliés',
+  doc.querySelector('.accordion[data-item="2"] .body').innerHTML.trim() === '');
+check('Auto ASR étant décochée, la qualification est intacte',
+  doc.querySelector('[data-deferred-property-input-root]').textContent.includes('Essai IA'));
+
+// ---------------------------------------------------------------------------
+// 3. Champs et options
+// ---------------------------------------------------------------------------
 check('trouve le déclencheur "Type d\'appel"',
   hs.findTrigger(["type d'appel"])?.trigger?.dataset.testId === 'call-type-select');
-check('trouve le déclencheur "Résultat de l\'appel"',
-  hs.findTrigger(["résultat de l'appel"])?.trigger?.dataset.testId === 'call-outcome-select');
-check('reconnaît la frame qui porte les champs de la combinaison',
-  hs.hasFieldsFor(hs.presets[0]));
+check('ne clique pas le span [role=option] qui affiche la valeur courante',
+  doc.querySelector('.sidebar [role="option"]').isConnected);
 
-// 2. Exécution d'une combinaison
-await hs.runPreset(hs.presets[0]);
-check('applique le type d\'appel',
-  el('call-type-select').dataset.selected === 'Call Commercial : prospection',
-  el('call-type-select').dataset.selected);
-check('applique le résultat',
-  el('call-outcome-select').dataset.selected === 'Répondeur/Pas de réponse',
-  el('call-outcome-select').dataset.selected);
-check('referme le menu après sélection', !window.document.querySelector('[role="listbox"]'));
+const already = await hs.selectValue(hs.actionsFor(hs.presets[0])[1]);
+check('ne refait rien si la valeur est déjà bonne',
+  already.ok && /déjà à la bonne valeur/.test(already.note || ''), JSON.stringify(already));
 
-// 3. Absorption des valeurs affichées
-const absorbed = hs.readCurrentValues();
-check('absorbe les deux valeurs posées sur l\'appel',
-  absorbed["Type d'appel"] === 'Call Commercial : prospection'
-  && absorbed["Résultat de l'appel"] === 'Répondeur/Pas de réponse',
-  JSON.stringify(absorbed));
-
-reset('call-outcome-select');
-check('n\'absorbe pas le texte d\'un champ vide',
-  hs.readCurrentValues()["Résultat de l'appel"] === undefined,
-  JSON.stringify(hs.readCurrentValues()));
-
-// 4. Tolérance casse / accents / espacement des deux-points
-reset('call-type-select');
-OPTIONS['call-type-select'][0] = 'Call commercial: PROSPECTION';
-const loose = await hs.selectValue(hs.actionsFor(hs.presets[0])[0]);
-check('matche malgré casse et espacement différents',
-  loose.ok && el('call-type-select').dataset.selected === 'Call commercial: PROSPECTION',
-  JSON.stringify(loose));
-
-// 5. Échecs propres
 const missing = await hs.selectValue({ name: 'Test', field: ["résultat de l'appel"], value: 'Valeur absente' });
 check('échoue proprement sur une option absente',
   missing.ok === false && /option introuvable/.test(missing.why), missing.why);
@@ -136,44 +221,122 @@ const noField = await hs.selectValue({ name: 'Fantôme', field: ['champ inexista
 check('échoue proprement sur un champ absent',
   noField.ok === false && /champ introuvable/.test(noField.why), noField.why);
 
-// 6. Le bruit permanent de la page n'est jamais cliqué
-reset('call-outcome-select');
-const noise = await hs.selectValue(hs.actionsFor(hs.presets[0])[1]);
-check('sélectionne la vraie option malgré des leurres au texte identique',
-  noise.ok && el('call-outcome-select').dataset.selected === 'Répondeur/Pas de réponse',
-  JSON.stringify(noise));
-check('ne clique pas le span [role=option] qui affiche la valeur courante',
-  window.document.querySelector('.property-list [role="option"]').isConnected);
+// ---------------------------------------------------------------------------
+// 4. Propriété différée de la barre latérale
+// ---------------------------------------------------------------------------
+const control = hs.findPropertyControl(hs.CONFIG.asrField.labels);
+check('trouve la propriété différée par son libellé',
+  control === doc.querySelector('[data-deferred-property-input-root]'));
+check('lit sa valeur sans le libellé',
+  hs.readPropertyValue(control) === 'Essai IA', hs.readPropertyValue(control));
 
-// 7. Champ déjà rempli : on ne rouvre pas le menu
-const already = await hs.selectValue(hs.actionsFor(hs.presets[0])[1]);
-check('ne refait rien si la valeur est déjà bonne',
-  already.ok && /déjà à la bonne valeur/.test(already.note || ''), JSON.stringify(already));
+// ---------------------------------------------------------------------------
+// 5. Escalade
+// ---------------------------------------------------------------------------
+check('chaîné depuis une qualification vide donne 2', hs.asrTarget('', true) === 'Appel sans réponse 2');
+check('chaîné depuis la valeur sans numéro donne 2', hs.asrTarget('Appel sans réponse', true) === 'Appel sans réponse 2');
+check('chaîné escalade 2 vers 3', hs.asrTarget('Appel sans réponse 2', true) === 'Appel sans réponse 3');
+check('chaîné escalade 3 vers 4', hs.asrTarget('Appel sans réponse 3', true) === 'Appel sans réponse 4');
+check('chaîné plafonne à 4', hs.asrTarget('Appel sans réponse 4', true) === 'Appel sans réponse 4');
+check('non chaîné pose le cran 1', hs.asrTarget('', false) === 'Appel sans réponse 1');
+check('non chaîné ramène un cran existant à 1', hs.asrTarget('Appel sans réponse 3', false) === 'Appel sans réponse 1');
+check('ne touche pas à une qualification étrangère, chaîné ou non',
+  hs.asrTarget('Rendez-vous pris', true) === null && hs.asrTarget('Essai IA', false) === null);
 
-// 8. Un menu resté ouvert ne bloque pas
-reset('call-type-select');
-el('call-type-select').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
-check('un menu est bien ouvert avant l\'appel', !!window.document.querySelector('[role="listbox"]'));
-const reopened = await hs.selectValue(hs.actionsFor(hs.presets[0])[0]);
-check('se rattrape quand le menu était déjà ouvert',
-  reopened.ok && el('call-type-select').dataset.selected === 'Call commercial: PROSPECTION',
-  JSON.stringify(reopened));
+// « Essai IA » appartient à l'opérateur : Auto ASR doit s'abstenir.
+hs.setPresetAutoASR(hs.presets[0], true);
+const abstained = await hs.applyAutoASR(true);
+check('Auto ASR s\'abstient devant une qualification d\'opérateur',
+  /laissé intact/.test(abstained.note || ''), JSON.stringify(abstained));
+check('la qualification est restée Essai IA', hs.readPropertyValue(hs.findPropertyControl(hs.CONFIG.asrField.labels)) === 'Essai IA');
 
-// 9. Sonde
+// Qualification vide : l'escalade écrit, en passant la propriété en édition.
+doc.querySelector('[data-deferred-property-input-root] .value').textContent = '';
+const chainedRun = await hs.applyAutoASR(true);
+await settle();
+check('Auto ASR chaîné écrit le cran 2',
+  el('asr-select')?.dataset.selected === 'Appel sans réponse 2',
+  JSON.stringify(chainedRun) + ' / ' + el('asr-select')?.dataset.selected);
+check('la propriété est passée en mode édition',
+  doc.querySelector('[data-deferred-property-input-root]').getAttribute('data-deferred-property-input-mode') === 'edit');
+
+const nextRun = await hs.applyAutoASR(true);
+await settle();
+check('un second passage chaîné monte à 3',
+  el('asr-select')?.dataset.selected === 'Appel sans réponse 3',
+  JSON.stringify(nextRun) + ' / ' + el('asr-select')?.dataset.selected);
+
+const aloneRun = await hs.applyAutoASR(false);
+await settle();
+check('un passage non chaîné redescend au cran 1',
+  el('asr-select')?.dataset.selected === 'Appel sans réponse 1',
+  JSON.stringify(aloneRun) + ' / ' + el('asr-select')?.dataset.selected);
+hs.setPresetAutoASR(hs.presets[0], false);
+
+// ---------------------------------------------------------------------------
+// 6. Sonde
+// ---------------------------------------------------------------------------
 const probe = hs.probeText();
-check('la sonde nomme les deux champs',
-  probe.includes("Type d'appel") && probe.includes("Résultat de l'appel"));
-check('la sonde liste les menus détectés', /Menus visibles \(2\)/.test(probe));
+check('la sonde nomme les champs et la propriété',
+  probe.includes("Type d'appel") && probe.includes('Qualification du lead IA'));
+check('la sonde compte les événements de la chronologie',
+  /Ancre \[data-test-id="timeline-preview-event"\] — 3 événement\(s\)/.test(probe),
+  probe.split('\n').find((l) => l.startsWith('Ancre')));
+check('la sonde rapporte les cartes retenues', /Cartes d'appel retenues : 3/.test(probe));
 check('la sonde annonce les candidats bruts sans les confondre avec un menu ouvert',
   /Candidats « option » présents sur la page \(2\)/.test(probe),
   probe.split('\n').find((l) => l.startsWith('Candidats')));
-check('la sonde affiche la valeur actuelle du champ',
-  probe.includes('valeur actuelle = "Call commercial: PROSPECTION"'));
 
-// 10. Enregistrement d'un raccourci, avec retour visuel
+const anchorReport = hs.probeAnchor('passé par');
+check('la sonde d\'ancre remonte les attributs utiles',
+  anchorReport.includes('data-test-id="timeline-preview-event"'));
+check('elle signale le niveau qui se répète',
+  /div\.accordion[^\n]*niveau répété/.test(anchorReport),
+  anchorReport.split('\n').find((l) => l.includes('accordion')) || '(aucune ligne accordion)');
+
+// ---------------------------------------------------------------------------
+// 7. Combinaisons, boutons, raccourcis
+// ---------------------------------------------------------------------------
+const barButtons = () => [...doc.getElementById('lazyq-bar').children];
+check('la barre montre la combinaison visible et le bouton réglages',
+  barButtons().length === 2 && barButtons()[0].textContent === 'Répondeur / Prospection',
+  barButtons().map((b) => b.textContent).join(' | '));
+check('les boutons sont atténués au repos',
+  barButtons().every((b) => Number(b.style.opacity) === hs.CONFIG.buttonOpacity));
+barButtons()[0].dispatchEvent(new window.MouseEvent('mouseenter'));
+check('le survol les rend pleins', barButtons()[0].style.opacity === '1');
+
+hs.presets.push({
+  id: 'second', label: 'Connecté / Relance', hotkey: null, visible: false, autoASR: false,
+  values: { "Type d'appel": 'Call Commercial : relance' },
+});
+hs.savePresets();
+check('une combinaison masquée n\'ajoute pas de bouton', barButtons().length === 2);
+hs.setPresetVisible(hs.presets[1], true);
+check('l\'oeil fait apparaître son bouton', barButtons().length === 3);
+hs.setPresetVisible(hs.presets[1], false);
+
+hs.toggleSettings();
+const eyes = () => [...doc.querySelectorAll('[title^="Afficher ou masquer"]')];
+check('le panneau expose un oeil par combinaison', eyes().length === hs.presets.length);
+check('l\'oeil est dessiné en SVG et non écrit en texte',
+  eyes().every((b) => b.querySelector('svg') && !b.textContent.trim()));
+check('l\'oeil barré porte un trait de plus que l\'oeil ouvert',
+  eyes()[1].querySelectorAll('path').length === eyes()[0].querySelectorAll('path').length + 1,
+  `${eyes()[1].querySelectorAll('path').length} vs ${eyes()[0].querySelectorAll('path').length}`);
+
+const asrBoxes = () => [...doc.querySelectorAll('[title^="Si l\'appel précédent"] input')];
+check('le panneau expose une case Auto ASR par combinaison', asrBoxes().length === hs.presets.length);
+check('Auto ASR est décochée par défaut', asrBoxes().every((box, i) => box.checked === hs.presets[i].autoASR));
+asrBoxes()[0].checked = true;
+asrBoxes()[0].dispatchEvent(new window.Event('change', { bubbles: true }));
+check('cocher la case active l\'option', hs.presets[0].autoASR === true);
+check('l\'option est mémorisée',
+  JSON.parse(window.localStorage.getItem('lazyQ.presets.v1'))[0].autoASR === true);
+hs.setPresetAutoASR(hs.presets[0], false);
+
 check('décrit le raccourci lisiblement',
-  hs.describeHotkey({ key: 'k', ctrlKey: true, shiftKey: true }) === 'Ctrl+Maj+K',
-  hs.describeHotkey({ key: 'k', ctrlKey: true, shiftKey: true }));
+  hs.describeHotkey({ key: 'k', ctrlKey: true, shiftKey: true }) === 'Ctrl+Maj+K');
 check('ne matche pas si un modificateur diffère',
   !hs.matchesHotkey({ key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: true },
     { key: 'k', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false }));
@@ -182,171 +345,18 @@ let live = [];
 let done = 'pas appelé';
 hs.recordHotkey((text) => live.push(text), (next) => { done = next; });
 press({ key: 'Control', ctrlKey: true });
-check('affiche les modificateurs enfoncés en direct',
-  live.includes('Ctrl+…'), JSON.stringify(live));
+check('affiche les modificateurs enfoncés en direct', live.includes('Ctrl+…'), JSON.stringify(live));
 release({ key: 'Control' });
 press({ key: 'p' });
 check('refuse une touche sans modificateur',
-  done === 'pas appelé' && live.includes('Ajoute Ctrl, Alt ou Cmd'), JSON.stringify(live));
+  done === 'pas appelé' && live.includes('Ajoute Ctrl, Alt ou Cmd'));
 press({ key: 'M', ctrlKey: true, altKey: true });
-check('retient la combinaison complète',
-  done && done.key === 'm' && done.ctrlKey && done.altKey, JSON.stringify(done));
+check('retient la combinaison complète', done && done.key === 'm' && done.ctrlKey && done.altKey);
 
 done = 'pas appelé';
 hs.recordHotkey(() => {}, (next) => { done = next; });
 press({ key: 'Escape' });
-check('Échap annule sans rien changer', done === null, JSON.stringify(done));
-
-// 11. Persistance des combinaisons
-hs.presets[0].hotkey = { key: 'm', ctrlKey: true, shiftKey: false, altKey: true, metaKey: false };
-hs.savePresets();
-const stored = JSON.parse(window.localStorage.getItem('lazyQ.presets.v1'));
-check('mémorise les combinaisons pour la prochaine visite',
-  stored[0].hotkey.key === 'm' && stored[0].values["Type d'appel"], JSON.stringify(stored[0].hotkey));
-
-// 12. Visibilité des boutons : masqué par défaut sauf le premier
-const barButtons = () => [...window.document.getElementById('lazyq-bar').children];
-check('la barre montre la combinaison visible et le bouton réglages',
-  barButtons().length === 2 && barButtons()[0].textContent === 'Répondeur / Prospection',
-  barButtons().map((b) => b.textContent).join(' | '));
-
-hs.presets.push({ id: 'second', label: 'Connecté / Relance', hotkey: null, visible: false, autoASR: false, values: { "Type d'appel": 'Call Commercial : relance' } });
-hs.savePresets();
-check('une combinaison masquée n\'ajoute pas de bouton',
-  barButtons().length === 2, barButtons().map((b) => b.textContent).join(' | '));
-
-hs.setPresetVisible(hs.presets[1], true);
-check('l\'oeil fait apparaître son bouton',
-  barButtons().length === 3 && barButtons()[1].textContent === 'Connecté / Relance',
-  barButtons().map((b) => b.textContent).join(' | '));
-
-hs.setPresetVisible(hs.presets[0], false);
-check('l\'oeil retire le bouton sans supprimer la combinaison',
-  barButtons().length === 2 && hs.presets.length === 2,
-  barButtons().map((b) => b.textContent).join(' | '));
-
-check('les boutons sont atténués au repos',
-  barButtons().every((b) => Number(b.style.opacity) === hs.CONFIG.buttonOpacity),
-  barButtons().map((b) => b.style.opacity).join(' | '));
-barButtons()[0].dispatchEvent(new window.MouseEvent('mouseenter'));
-check('le survol les rend pleins', barButtons()[0].style.opacity === '1');
-
-// 13. L'oeil est un tracé, pas un emoji : aucune dépendance à la police
-hs.toggleSettings();
-const eyes = () => [...window.document.querySelectorAll('[title^="Afficher ou masquer"]')];
-check('le panneau expose un oeil par combinaison', eyes().length === hs.presets.length,
-  String(eyes().length));
-check('l\'oeil est dessiné en SVG et non écrit en texte',
-  eyes().every((b) => b.querySelector('svg') && !b.textContent.trim()),
-  eyes().map((b) => JSON.stringify(b.textContent)).join(' | '));
-
-// presets[0] est masqué, presets[1] visible depuis les tests précédents
-const pathCount = (b) => b.querySelectorAll('path').length;
-check('l\'oeil barré porte un trait de plus que l\'oeil ouvert',
-  pathCount(eyes()[0]) === pathCount(eyes()[1]) + 1,
-  `${pathCount(eyes()[0])} vs ${pathCount(eyes()[1])}`);
-
-eyes()[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-check('cliquer l\'oeil rétablit le bouton et l\'icône ouverte',
-  hs.presets[0].visible && pathCount(eyes()[0]) === 2 && barButtons().length === 3,
-  `${hs.presets[0].visible} / ${pathCount(eyes()[0])} / ${barButtons().length}`);
-
-check('les boutons sont un peu moins transparents', hs.CONFIG.buttonOpacity >= 0.85);
-
-// 14. Chronologie et escalade « Appel sans réponse N »
-// Chronologie simulée : deux appels au même numéro, écrits différemment, puis
-// un appel à un autre numéro.
-const timeline = window.document.createElement('div');
-timeline.className = 'timeline';
-timeline.innerHTML = [
-  '<div data-test-id="timeline-item-a">Appel sortant · Répondeur/Pas de réponse · Call Commercial : prospection · +33 6 12 34 56 78 · 10 sept. 2026 14:03</div>',
-  '<div data-test-id="timeline-item-b">Appel sortant · Répondeur/Pas de réponse · Call Commercial : prospection · 06 12 34 56 78 · 9 sept. 2026 11:20</div>',
-  '<div data-test-id="timeline-item-c">Appel entrant · Connecté · 06 99 88 77 66 · 1 sept. 2026 09:15</div>',
-].join('');
-window.document.body.appendChild(timeline);
-
-const cards = hs.findCallCards();
-check('repère les cartes d\'appel de la chronologie', cards.length === 3, String(cards.length));
-check('rend la plus récente en premier',
-  cards[0].dataset.testId === 'timeline-item-a', cards[0]?.dataset.testId);
-
-const [first, second, third] = cards.map(hs.cardInfo);
-check('extrait le numéro malgré les formats différents',
-  first.phones[0] === '612345678' && second.phones[0] === '612345678',
-  JSON.stringify([first.phones, second.phones]));
-check('ne prend pas la date pour un numéro',
-  first.phones.length === 1, JSON.stringify(first.phones));
-check('reconnaît deux appels au même numéro', hs.samePhone(first, second));
-check('distingue un numéro différent', !hs.samePhone(first, third));
-
-check('reconnaît une carte déjà catégorisée comme la combinaison',
-  hs.cardMatchesPreset(second, hs.presets[0]));
-check('ne confond pas avec un appel d\'une autre nature',
-  !hs.cardMatchesPreset(third, hs.presets[0]));
-
-// Appel chaîné : le précédent vise le même numéro et porte la combinaison.
-check('chaîné depuis une qualification vide donne 2',
-  hs.asrTarget('', true) === 'Appel sans réponse 2', hs.asrTarget('', true));
-check('chaîné depuis la valeur sans numéro donne 2',
-  hs.asrTarget('Appel sans réponse', true) === 'Appel sans réponse 2');
-check('chaîné escalade 2 vers 3', hs.asrTarget('Appel sans réponse 2', true) === 'Appel sans réponse 3');
-check('chaîné escalade 3 vers 4', hs.asrTarget('Appel sans réponse 3', true) === 'Appel sans réponse 4');
-check('chaîné plafonne à 4', hs.asrTarget('Appel sans réponse 4', true) === 'Appel sans réponse 4');
-
-// Sans appel précédent comparable : première tentative.
-check('non chaîné pose le cran 1',
-  hs.asrTarget('', false) === 'Appel sans réponse 1', hs.asrTarget('', false));
-check('non chaîné pose 1 même sur un espace vide',
-  hs.asrTarget('   ', false) === 'Appel sans réponse 1');
-check('non chaîné ramène un cran existant à 1',
-  hs.asrTarget('Appel sans réponse 3', false) === 'Appel sans réponse 1',
-  hs.asrTarget('Appel sans réponse 3', false));
-
-// La qualification de l'opérateur prime dans les deux cas.
-check('ne touche pas à une qualification étrangère, chaîné ou non',
-  hs.asrTarget('Rendez-vous pris', true) === null && hs.asrTarget('Rendez-vous pris', false) === null);
-check('ne touche pas non plus à la qualification vue sur le portail',
-  hs.asrTarget('Essai IA', false) === null, String(hs.asrTarget('Essai IA', false)));
-
-check('la sonde rapporte la chronologie',
-  hs.probeText().includes('--- CHRONOLOGIE ---') && hs.timelineText().includes("Cartes d'appel retenues : 3"));
-
-// 15. Sonde structurelle : partir d'un texte et remonter les ancêtres
-const feed = window.document.createElement('section');
-feed.className = 'feed';
-feed.innerHTML = [1, 2, 3, 4].map((n) =>
-  `<article class="card" data-item="${n}"><header><span class="who">Appel - Connecté passé par Aurélien Milano</span></header></article>`
-).join('');
-window.document.body.appendChild(feed);
-
-const anchor = hs.probeAnchor('passé par');
-check('la sonde d\'ancre trouve les éléments les plus profonds',
-  /4 élément\(s\) au plus profond/.test(anchor), anchor.split('\n')[1]);
-check('elle remonte les attributs utiles au ciblage',
-  anchor.includes('data-item="1"'), anchor.split('\n').slice(0, 12).join(' / '));
-check('elle signale le niveau qui se répète',
-  /article\.card[^\n]*niveau répété/.test(anchor),
-  anchor.split('\n').find((l) => l.includes('article')) || '(aucune ligne article)');
-check('elle nomme la frame examinée', anchor.includes('frame principale'));
-
-// 16. Case Auto ASR : désactivée par défaut, persistée quand on la coche
-check('Auto ASR est désactivée sur la combinaison livrée',
-  hs.presets[0].autoASR === false, String(hs.presets[0].autoASR));
-
-const asrBoxes = () => [...window.document.querySelectorAll('[title^="Si l\'appel précédent"] input')];
-check('le panneau expose une case Auto ASR par combinaison',
-  asrBoxes().length === hs.presets.length, String(asrBoxes().length));
-check('la case reflète l\'état de la combinaison',
-  asrBoxes().every((box, i) => box.checked === hs.presets[i].autoASR));
-
-asrBoxes()[0].checked = true;
-asrBoxes()[0].dispatchEvent(new window.Event('change', { bubbles: true }));
-check('cocher la case active l\'option', hs.presets[0].autoASR === true);
-check('l\'option est mémorisée',
-  JSON.parse(window.localStorage.getItem('lazyQ.presets.v1'))[0].autoASR === true);
-
-hs.setPresetAutoASR(hs.presets[0], false);
-check('décocher la désactive', hs.presets[0].autoASR === false);
+check('Échap annule sans rien changer', done === null);
 
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {

@@ -58,9 +58,12 @@ boutons sont atténués au repos et redeviennent pleins au survol.
 | Son raccourci | Idem, sans quitter le clavier |
 | ⚙️ | Ouvre le panneau de gestion |
 
-L'éditeur d'appel doit être ouvert — appel sélectionné et déplié dans la
-chronologie. Un bandeau indique la progression : bleu pendant l'exécution,
-turquoise si tout est passé, rouge avec le nom de l'action fautive sinon.
+Une combinaison s'applique au **dernier appel de la chronologie**, pas à celui
+qui se trouve ouvert : LazyQ le déplie lui-même si besoin. Un bandeau indique la
+progression : bleu pendant l'exécution, turquoise si tout est passé, rouge avec
+le nom de l'action fautive sinon.
+
+L'absorption, elle, lit toujours **l'appel affiché** — on absorbe ce qu'on voit.
 
 ### Gérer les combinaisons
 
@@ -83,7 +86,10 @@ Le panneau ⚙️ liste les combinaisons. Pour chacune :
   *Appel sans réponse 4*.
 
   Un appel est *chaîné* quand le précédent vise le même numéro et porte déjà
-  cette combinaison. Sans chaînage — pas d'appel avant, numéro différent ou
+  cette combinaison. L'aperçu replié n'affichant que le **résultat** de l'appel
+  — « Appel - Connecté », « Appel - Répondeur/Pas de réponse » — et jamais le
+  type, une seule valeur de la combinaison suffit à établir la correspondance ;
+  en exiger toutes rendrait le chaînage systématiquement faux. Sans chaînage — pas d'appel avant, numéro différent ou
   illisible, autre catégorisation — c'est une première tentative, donc
   *Appel sans réponse 1*.
 
@@ -140,6 +146,34 @@ script remonte du libellé vers le déclencheur du menu, clique (séquence
 `pointerdown`/`mousedown`/`click` complète — certains composants n'écoutent pas
 `click`), puis cherche l'option. La comparaison ignore la casse, les accents et
 l'espacement autour des `:`.
+
+### Repérer le dernier appel
+
+Chaque activité de la chronologie porte `[data-test-id="timeline-preview-event"]`.
+La carte complète — l'aperçu *et* l'éditeur déplié — est un ancêtre, mais à une
+profondeur variable, et les classes de HubSpot sont des hachages instables. Le
+script remonte donc depuis l'ancre, aussi haut que possible, sous deux
+conditions : **ne jamais englober un autre événement** (deux appels passeraient
+pour un seul) et s'arrêter si le bloc devient anormalement gros, garde-fou pour
+une fiche ne portant qu'un appel.
+
+L'ordre vient des dates lues sur les cartes (« 10 sept. 2026 à 11:53 ») quand
+elles sont toutes lisibles, et de l'ordre du DOM sinon. Se tromper de dernier
+appel est la pire erreur possible ici, donc les dates priment.
+
+Attention au texte des cartes : la date suit le numéro sans séparateur net, et
+l'espace étant admis dans un numéro, `+33 5 58 83 87 63 10 sept.` faisait
+aspirer le *10* dans le numéro. Les dates sont retirées du texte avant la
+recherche.
+
+### La qualification est une propriété différée
+
+« Qualification du lead IA » n'est pas un menu mais un
+`[data-deferred-property-input-root]` en `mode="display"` : un affichage en
+lecture seule qui ne devient un vrai champ qu'une fois cliqué. Chercher un menu
+sous son libellé remontait le bouton *Actions* du panneau. Le script clique donc
+le bloc pour le passer en édition, attend le champ, puis sélectionne — même
+mécanique de menu que partout ailleurs.
 
 ### Comment une option est identifiée
 
