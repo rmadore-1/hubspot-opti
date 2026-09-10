@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LazyQ — qualification rapide d'appel HubSpot
 // @namespace    https://webdentiste.eu/
-// @version      3.1.0
+// @version      3.2.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -59,6 +59,10 @@
       // Chaque activité de la chronologie porte cette ancre. La carte complète
       // est un ancêtre : on remonte depuis l'ancre plutôt que de figer un
       // niveau, les classes de HubSpot étant des hachages instables.
+      // Le bloc d'accordéon est rendu une fois par événement et porte l'aperçu
+      // comme l'éditeur : c'est la carte, sans remontée ni devinette.
+      cardSelectors: ['[data-test-id="collapsible-event-accordion"]'],
+      // Repli si ce test-id disparaît : on repart d'une ancre et on remonte.
       eventAnchors: [
         '[data-test-id="timeline-preview-event"]',
         '[data-test-id="generic-preview-event-header"]',
@@ -253,8 +257,16 @@
     return digits.length >= 9 ? digits.slice(-9) : '';
   }
 
+  // La carte annonce l'interlocuteur par « avec +33 6 … ». Le reste du bloc
+  // charrie des identifiants et des durées qui passeraient pour des numéros.
+  const WITH_PHONE_RE = /\bavec\s+((?:\+\d{1,3}[\s.\-]?)?(?:\d[\s.\-]?){8,13}\d)/gi;
+
   function phonesIn(text) {
     const withoutDates = (text || '').replace(DATE_RE, ' ');
+
+    const announced = [...withoutDates.matchAll(WITH_PHONE_RE)].map((m) => phoneKey(m[1])).filter(Boolean);
+    if (announced.length) return [...new Set(announced)];
+
     return [...new Set((withoutDates.match(PHONE_RE) || []).map(phoneKey).filter(Boolean))];
   }
 
@@ -275,12 +287,16 @@
    * événement — ce qui ferait passer deux appels pour un seul.
    */
   function cardRoot(anchor, anchors) {
+    // Le clone d'accessibilité porte le même texte que l'aperçu visible : il
+    // faut le traverser pour atteindre le bloc commun, sans jamais franchir la
+    // frontière d'un autre événement.
+    const isClone = (other) => norm(other.textContent) === norm(anchor.textContent);
+
     let node = anchor;
     for (let climb = 0; climb < CONFIG.timeline.maxClimb; climb += 1) {
       const parent = node.parentElement;
       if (!parent) break;
-      // Ne jamais englober un autre événement : deux appels passeraient pour un.
-      if (anchors.some((other) => other !== anchor && parent.contains(other))) break;
+      if (anchors.some((other) => other !== anchor && parent.contains(other) && !isClone(other))) break;
       // Garde-fou quand la fiche ne porte qu'un appel : sans autre ancre pour
       // arrêter la remontée, on finirait par prendre la page entière.
       if ((parent.textContent || '').length > CONFIG.timeline.maxCardChars) break;
@@ -289,29 +305,47 @@
     return node;
   }
 
+  const isCall = (el) => /\bappel\b|\bcall\b/.test(norm(el.textContent));
+
+  /**
+   * HubSpot rend un clone d'accessibilité de l'aperçu : sans ce filtre, chaque
+   * appel apparaît deux fois et « l'appel d'avant » est le même appel.
+   * On garde les blocs les plus externes.
+   */
+  function outermost(elements) {
+    return elements.filter((el) => !elements.some((other) => other !== el && other.contains(el)));
+  }
+
+  function orderByDate(cards) {
+    // Les dates priment sur l'ordre du DOM quand elles sont toutes lisibles :
+    // se tromper de « dernier appel » est la pire erreur possible ici.
+    const dated = cards.map((card) => ({ card, at: cardDate(card.textContent) }));
+    if (dated.every((entry) => entry.at !== null)) {
+      return dated.sort((a, b) => b.at - a.at).map((entry) => entry.card);
+    }
+    return CONFIG.timeline.newestFirst ? cards : cards.reverse();
+  }
+
   /** Cartes d'appel de la chronologie, de la plus récente à la plus ancienne. */
   function findCallCards() {
+    for (const selector of CONFIG.timeline.cardSelectors) {
+      let cards;
+      try { cards = [...document.querySelectorAll(selector)].filter(isVisible); } catch (_) { continue; }
+      cards = outermost(cards.filter(isCall));
+      if (cards.length) return orderByDate(cards);
+    }
+
     for (const selector of CONFIG.timeline.eventAnchors) {
       let anchors;
       try { anchors = [...document.querySelectorAll(selector)].filter(isVisible); } catch (_) { continue; }
       if (!anchors.length) continue;
 
       const cards = [];
-      for (const anchor of anchors) {
-        // La chronologie mêle appels, e-mails et notes : on ne garde que les appels.
-        if (!/\bappel\b|\bcall\b/.test(norm(anchor.textContent))) continue;
+      for (const anchor of anchors.filter(isCall)) {
         const card = cardRoot(anchor, anchors);
         if (!cards.includes(card)) cards.push(card);
       }
-      if (!cards.length) continue;
-
-      // Les dates priment sur l'ordre du DOM quand elles sont lisibles : se
-      // tromper de « dernier appel » est la pire erreur possible ici.
-      const dated = cards.map((card) => ({ card, at: cardDate(card.textContent) }));
-      if (dated.every((entry) => entry.at !== null)) {
-        return dated.sort((a, b) => b.at - a.at).map((entry) => entry.card);
-      }
-      return CONFIG.timeline.newestFirst ? cards : cards.reverse();
+      if (cards.length) return orderByDate(outermost(cards));
     }
     return [];
   }
@@ -441,7 +475,7 @@
    * Mécanique commune à tous les menus, quel que soit le moyen d'avoir obtenu
    * le déclencheur : champ d'éditeur d'appel ou propriété de la barre latérale.
    */
-  async function pickOption({ trigger, value, name, reread }) {
+  async function pickOption({ trigger, value, name, reread, optionsBefore }) {
     if (norm(readValue(trigger)).includes(norm(value))) {
       return { ok: true, note: `${name} déjà à la bonne valeur` };
     }
@@ -460,16 +494,22 @@
     // navigation, listes de propriétés, et surtout l'affichage des valeurs
     // courantes — un span « Répondeur/Pas de réponse » existe déjà avant tout
     // clic. Chercher dans toute la page reviendrait donc à cliquer ce span.
-    const openAndFind = async () => {
-      const optionsBefore = new Set(optionNodes(true));
+    // Une propriété différée rend déjà sa liste au passage en édition : sa photo
+    // « avant » doit donc dater d'avant ce passage, sinon le diff est vide et
+    // l'option, pourtant à l'écran, passe pour introuvable.
+    const openAndFind = async (snapshot) => {
+      const before = snapshot || new Set(optionNodes(true));
       const inputsBefore = new Set(document.querySelectorAll('input'));
+      const fresh = (broad) => optionNodes(broad).filter((el) => !before.has(el));
+      const look = () => matchOption(fresh(false), value) || matchOption(fresh(true), value);
+
+      // Le menu peut déjà être ouvert quand la photo date d'avant l'activation :
+      // une propriété différée rend sa liste dès qu'on l'active. Cliquer la
+      // refermerait pour la rouvrir au tour suivant — autant la lire tout de suite.
+      if (snapshot && look()) return look();
 
       realClick(trigger);
       await sleep(250);
-
-      const fresh = (broad) => optionNodes(broad).filter((el) => !optionsBefore.has(el));
-      const look = () => matchOption(fresh(false), value) || matchOption(fresh(true), value);
-
       if (look()) return look();
 
       // Liste longue : on filtre par saisie avant de re-chercher.
@@ -486,7 +526,9 @@
     // Si un menu était déjà ouvert, il figure dans la photo « avant » et le diff
     // ne voit rien. Le premier clic l'a alors refermé : on retente, la seconde
     // photo partant cette fois d'un état fermé.
-    const option = (await openAndFind()) || (await openAndFind());
+    // Premier essai avec la photo fournie s'il y en a une, puis à neuf : le
+    // clic a pu refermer un menu déjà ouvert.
+    const option = (await openAndFind(optionsBefore)) || (await openAndFind());
 
     if (!option) {
       // Escape ne referme un menu que s'il y en a un : sans menu ouvert, il
@@ -534,31 +576,64 @@
     return label && full.startsWith(label) ? full.slice(label.length).trim() : full;
   }
 
+  const EDIT_TRIGGER = '[role="combobox"], button[aria-haspopup], select, input:not([type="hidden"])';
+
+  /** Le champ éditable de la propriété, une fois celle-ci activée. */
+  function propertyTrigger(field, fallback) {
+    const live = findPropertyControl(field.labels) || fallback;
+    if (!live) return null;
+    return [...live.querySelectorAll(EDIT_TRIGGER)].find(isVisible) || null;
+  }
+
+  /**
+   * Bascule la propriété en édition. Le bloc porte role="button" : le clic
+   * suffit d'ordinaire, mais on tente aussi la touche Entrée puis un clic sur
+   * la zone de valeur, certains blocs n'écoutant pas le clic sur leur racine.
+   */
+  async function enterEditMode(field, root) {
+    if (propertyTrigger(field, root)) return true;
+
+    const attempts = [
+      () => realClick(root),
+      () => {
+        if (root.focus) root.focus();
+        root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      },
+      () => {
+        const inner = [...root.children].reverse().find(isVisible);
+        if (inner) realClick(inner);
+      },
+    ];
+
+    for (const attempt of attempts) {
+      attempt();
+      if (await waitFor(() => propertyTrigger(field, root), 1200)) return true;
+    }
+    return false;
+  }
+
   async function setPropertyValue(field, value) {
-    let root = findPropertyControl(field.labels);
+    const root = findPropertyControl(field.labels);
     if (!root) return { ok: false, why: `propriété introuvable : ${field.name}` };
 
     if (norm(readPropertyValue(root)).includes(norm(value))) {
       return { ok: true, note: `${field.name} déjà à la bonne valeur` };
     }
 
-    if (root.getAttribute('data-deferred-property-input-mode') !== 'edit') {
-      realClick(root);
-      await sleep(350);
+    // Photo prise avant l'activation : le passage en édition rend parfois la
+    // liste, qui serait alors comptée comme « déjà présente ».
+    const optionsBefore = new Set(optionNodes(true));
+
+    if (!(await enterEditMode(field, root))) {
+      return { ok: false, why: `${field.name} : passage en édition impossible` };
     }
 
-    const trigger = await waitFor(() => {
-      const live = findPropertyControl(field.labels) || root;
-      return [...live.querySelectorAll('[role="combobox"], button[aria-haspopup], select, input:not([type="hidden"])')]
-        .find(isVisible) || null;
-    }, 2000);
-
-    if (!trigger) return { ok: false, why: `${field.name} : passage en édition impossible` };
-
+    const trigger = propertyTrigger(field, root);
     return pickOption({
       trigger,
       value,
       name: field.name,
+      optionsBefore,
       reread: () => {
         const live = findPropertyControl(field.labels);
         return live ? readPropertyValue(live) : '';
@@ -1281,10 +1356,10 @@
   function timelineText() {
     const lines = ['--- CHRONOLOGIE ---'];
 
-    for (const selector of CONFIG.timeline.eventAnchors) {
+    for (const selector of CONFIG.timeline.cardSelectors.concat(CONFIG.timeline.eventAnchors)) {
       let raw = [];
       try { raw = [...document.querySelectorAll(selector)]; } catch (_) { /* sélecteur refusé */ }
-      lines.push(`Ancre ${selector} — ${raw.length} événement(s)`);
+      lines.push(`Sélecteur ${selector} — ${raw.length} élément(s) bruts`);
     }
 
     const cards = findCallCards();
@@ -1328,11 +1403,24 @@
    */
   async function probeOptions(labels) {
     const names = Array.isArray(labels) ? labels : [labels];
-    const found = findTrigger(names);
-    if (!found) { showReport(`Champ introuvable : ${names.join(' / ')}`); return; }
 
+    // Une propriété différée n'a pas de menu tant qu'elle n'est pas activée :
+    // elle a son propre chemin, sinon la sonde ne verrait jamais ses options.
+    const property = findPropertyControl(names);
     const before = new Set(optionNodes(true));
-    realClick(found.trigger);
+
+    let trigger = null;
+    if (property) {
+      await enterEditMode({ labels: names }, property);
+      trigger = propertyTrigger({ labels: names }, property);
+    } else {
+      const found = findTrigger(names);
+      trigger = found && found.trigger;
+    }
+    if (!trigger) { showReport(`Champ introuvable ou non activable : ${names.join(' / ')}`); return; }
+
+    const found = { trigger };
+    realClick(trigger);
     await sleep(600);
 
     const fresh = optionNodes(true).filter((el) => !before.has(el));
@@ -1483,6 +1571,7 @@
   window.lazyQ = {
     probe, probeText, probeOptions, probeAnchor, timelineText, nodeSignature, trigger, runPreset, selectValue, actionsFor, findTrigger,
     findCallCards, cardInfo, cardDate, cardIsOpen, ensureCardOpen, samePhone, cardMatchesPreset,
+    enterEditMode, propertyTrigger, outermost,
     asrTarget, phonesIn, findPropertyControl, readPropertyValue, setPropertyValue, applyAutoASR,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
     describeHotkey, matchesHotkey, savePresets, setPresetVisible, setPresetAutoASR, toggleSettings,

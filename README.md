@@ -149,13 +149,19 @@ l'espacement autour des `:`.
 
 ### Repérer le dernier appel
 
-Chaque activité de la chronologie porte `[data-test-id="timeline-preview-event"]`.
-La carte complète — l'aperçu *et* l'éditeur déplié — est un ancêtre, mais à une
-profondeur variable, et les classes de HubSpot sont des hachages instables. Le
-script remonte donc depuis l'ancre, aussi haut que possible, sous deux
-conditions : **ne jamais englober un autre événement** (deux appels passeraient
-pour un seul) et s'arrêter si le bloc devient anormalement gros, garde-fou pour
-une fiche ne portant qu'un appel.
+Chaque événement est un bloc `[data-test-id="collapsible-event-accordion"]`, qui
+porte à la fois l'aperçu et l'éditeur déplié. C'est la carte.
+
+Si ce `data-test-id` disparaît, un repli repart de
+`[data-test-id="timeline-preview-event"]` et remonte jusqu'au bloc, sans jamais
+franchir la frontière d'un autre événement, et sans dépasser une taille
+raisonnable — garde-fou pour une fiche ne portant qu'un appel.
+
+**HubSpot rend l'aperçu deux fois**, une version visible et un clone
+d'accessibilité : sans dédoublonnage, chaque appel compte double et « l'appel
+d'avant » devient le même appel vu deux fois, ce qui rendait le chaînage
+toujours vrai. Les clones se reconnaissent à leur texte identique, ce qui permet
+de les traverser en remontant tout en s'arrêtant à un événement voisin.
 
 L'ordre vient des dates lues sur les cartes (« 10 sept. 2026 à 11:53 ») quand
 elles sont toutes lisibles, et de l'ordre du DOM sinon. Se tromper de dernier
@@ -164,16 +170,24 @@ appel est la pire erreur possible ici, donc les dates priment.
 Attention au texte des cartes : la date suit le numéro sans séparateur net, et
 l'espace étant admis dans un numéro, `+33 5 58 83 87 63 10 sept.` faisait
 aspirer le *10* dans le numéro. Les dates sont retirées du texte avant la
-recherche.
+recherche, et le numéro annoncé par « avec » l'emporte sur tout autre nombre du
+bloc — un identifiant d'enregistrement en a la longueur.
 
 ### La qualification est une propriété différée
 
 « Qualification du lead IA » n'est pas un menu mais un
 `[data-deferred-property-input-root]` en `mode="display"` : un affichage en
 lecture seule qui ne devient un vrai champ qu'une fois cliqué. Chercher un menu
-sous son libellé remontait le bouton *Actions* du panneau. Le script clique donc
-le bloc pour le passer en édition, attend le champ, puis sélectionne — même
-mécanique de menu que partout ailleurs.
+sous son libellé remontait le bouton *Actions* du panneau. Le script active donc
+le bloc, attend le champ, puis sélectionne — même mécanique de menu que partout
+ailleurs. L'activation retente au clavier (`Entrée` sur un `role="button"`) puis
+sur la zone de valeur, tous les blocs ne répondant pas au clic sur leur racine.
+
+Une subtilité coûteuse : ce composant **déroule déjà sa liste** au passage en
+édition. La photo « avant » du diff doit donc dater d'avant l'activation, sinon
+les options y figurent déjà et une valeur pourtant affichée passe pour
+introuvable. Et quand le menu est déjà ouvert, le script le lit au lieu de
+cliquer — un clic le refermerait.
 
 ### Comment une option est identifiée
 

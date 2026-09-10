@@ -10,19 +10,28 @@ const script = fs.readFileSync(new URL('../userscript/lazyq.user.js', import.met
 //  - « Qualification du lead IA » est une propriété différée de la barre
 //    latérale : lecture seule jusqu'au clic ;
 //  - la page porte en permanence des leurres qui ressemblent à des options.
-function callCard({ id, outcome, phone, date, open }) {
+// HubSpot rend l'aperçu deux fois : une version visible et un clone
+// d'accessibilité. Sans dédoublonnage, chaque appel compte double et
+// « l'appel d'avant » devient le même appel.
+function preview({ outcome, phone, date }) {
   return `
-  <div class="accordion" data-item="${id}">
-    <span role="presentation">
-      <button class="toggle" aria-expanded="false" aria-label="Développer"></button>
-      <div class="flex">
         <div data-test-id="timeline-preview-event">
           <h4><span data-test-id="generic-preview-event-header"><span data-content="true"><span>Appel - ${outcome} passé par Aurélien Milano</span></span></span></h4>
-        </div>
-        <div class="with">avec ${phone}</div>
-        <div class="when">${date}</div>
-      </div>
+          <div class="with">avec ${phone}</div>
+          <div class="when">${date}</div>
+        </div>`;
+}
+
+function callCard({ id, outcome, phone, date, open }) {
+  const body = preview({ outcome, phone, date });
+  return `
+  <div class="accordion" data-test-id="collapsible-event-accordion" data-item="${id}">
+    <span role="presentation">
+      <button class="toggle" aria-expanded="false" aria-label="Développer"></button>
+      <div class="flex">${body}</div>
+      <div class="a11y-clone">${body}</div>
     </span>
+    <div class="meta">Récapitulatif de l'enregistrement 9745308150</div>
     <div class="body">${open ? EDITOR : ''}</div>
   </div>`;
 }
@@ -130,6 +139,9 @@ property.addEventListener('mousedown', () => {
   trigger.textContent = value.textContent;
   value.replaceWith(trigger);
   wireSelect(trigger, OPTIONS['asr-select']);
+  // Le composant réel déroule sa liste dès l'activation : c'est ce qui rendait
+  // les options invisibles au diff quand la photo datait d'après l'activation.
+  trigger.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
 });
 
 doc.addEventListener('keydown', (event) => {
@@ -151,10 +163,19 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 // ---------------------------------------------------------------------------
 const cards = hs.findCallCards();
 check('repère les trois appels de la chronologie', cards.length === 3, String(cards.length));
-check('remonte jusqu\'au bloc qui porte aussi l\'éditeur',
-  cards[0].classList.contains('accordion'), cards[0]?.className);
-check('n\'englobe jamais deux appels dans une carte',
-  cards.every((card) => card.querySelectorAll('[data-test-id="timeline-preview-event"]').length === 1));
+check('ne compte pas deux fois un appel malgré le clone d\'accessibilité',
+  doc.querySelectorAll('[data-test-id="timeline-preview-event"]').length === 6 && cards.length === 3,
+  `${doc.querySelectorAll('[data-test-id="timeline-preview-event"]').length} ancres pour ${cards.length} cartes`);
+check('retient le bloc qui porte aussi l\'éditeur',
+  cards[0].dataset.testId === 'collapsible-event-accordion', cards[0]?.dataset.testId);
+
+// Repli sans le test-id du bloc : on repart des ancres et on remonte.
+const realSelectors = hs.CONFIG.timeline.cardSelectors.slice();
+hs.CONFIG.timeline.cardSelectors = ['.selecteur-absent'];
+const fallback = hs.findCallCards();
+check('le repli par ancrage dédoublonne lui aussi',
+  fallback.length === 3, String(fallback.length));
+hs.CONFIG.timeline.cardSelectors = realSelectors;
 check('classe par date, le plus récent d\'abord',
   cards.map((c) => c.dataset.item).join(',') === '1,2,3',
   cards.map((c) => c.dataset.item).join(','));
@@ -166,7 +187,10 @@ check('lit la date de la carte',
 check('extrait le numéro malgré les formats différents',
   last.phones[0] === '558838763' && previous.phones[0] === '558838763',
   JSON.stringify([last.phones, previous.phones]));
-check('ne prend pas la date pour un numéro', last.phones.length === 1, JSON.stringify(last.phones));
+check('ne retient que le numéro annoncé par « avec »',
+  last.phones.length === 1 && last.phones[0] === '558838763', JSON.stringify(last.phones));
+check('ignore un identifiant long qui traîne dans la carte',
+  !last.phones.includes('745308150'), JSON.stringify(last.phones));
 check('n\'aspire pas le jour de la date dans le numéro',
   last.phones[0] === '558838763', last.phones[0]);
 check('extrait le numéro même collé à une date sans séparateur net',
@@ -274,15 +298,56 @@ check('un passage non chaîné redescend au cran 1',
   JSON.stringify(aloneRun) + ' / ' + el('asr-select')?.dataset.selected);
 hs.setPresetAutoASR(hs.presets[0], false);
 
+// Certains blocs n'ont pas répondu au clic sur leur racine lors des essais
+// réels : l'activation retente au clavier, puis sur la zone de valeur.
+function rebuildProperty(activateOn) {
+  const old = doc.querySelector('[data-deferred-property-input-root]');
+  const fresh = doc.createElement('div');
+  fresh.setAttribute('data-deferred-property-input-root', 'true');
+  fresh.setAttribute('data-deferred-property-input-mode', 'display');
+  fresh.setAttribute('role', 'button');
+  fresh.innerHTML = '<div class="FormControl__LabelWrapper"><label><span>Qualification du lead IA</span></label></div><div class="value">Essai IA</div>';
+  old.replaceWith(fresh);
+
+  const activate = () => {
+    if (fresh.getAttribute('data-deferred-property-input-mode') === 'edit') return;
+    fresh.setAttribute('data-deferred-property-input-mode', 'edit');
+    const trigger = doc.createElement('button');
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.dataset.testId = 'asr-select';
+    trigger.textContent = 'Essai IA';
+    fresh.querySelector('.value').replaceWith(trigger);
+    wireSelect(trigger, OPTIONS['asr-select']);
+  };
+
+  if (activateOn === 'enter') {
+    fresh.addEventListener('keydown', (e) => { if (e.key === 'Enter') activate(); });
+  } else {
+    fresh.querySelector('.value').addEventListener('mousedown', activate);
+  }
+  return fresh;
+}
+
+const enterOnly = rebuildProperty('enter');
+check('active la propriété au clavier quand le clic ne suffit pas',
+  await hs.enterEditMode(hs.CONFIG.asrField, enterOnly)
+  && enterOnly.getAttribute('data-deferred-property-input-mode') === 'edit');
+
+const innerOnly = rebuildProperty('inner');
+check('active la propriété en cliquant sa zone de valeur en dernier recours',
+  await hs.enterEditMode(hs.CONFIG.asrField, innerOnly)
+  && innerOnly.getAttribute('data-deferred-property-input-mode') === 'edit');
+
 // ---------------------------------------------------------------------------
 // 6. Sonde
 // ---------------------------------------------------------------------------
 const probe = hs.probeText();
 check('la sonde nomme les champs et la propriété',
   probe.includes("Type d'appel") && probe.includes('Qualification du lead IA'));
-check('la sonde compte les événements de la chronologie',
-  /Ancre \[data-test-id="timeline-preview-event"\] — 3 événement\(s\)/.test(probe),
-  probe.split('\n').find((l) => l.startsWith('Ancre')));
+check('la sonde compte les blocs et les ancres séparément',
+  /collapsible-event-accordion"\] — 3 élément\(s\)/.test(probe)
+  && /timeline-preview-event"\] — 6 élément\(s\)/.test(probe),
+  probe.split('\n').filter((l) => l.startsWith('Sélecteur')).join(' | '));
 check('la sonde rapporte les cartes retenues', /Cartes d'appel retenues : 3/.test(probe));
 check('la sonde annonce les candidats bruts sans les confondre avec un menu ouvert',
   /Candidats « option » présents sur la page \(2\)/.test(probe),
