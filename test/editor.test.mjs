@@ -55,6 +55,7 @@ const HTML = `<!doctype html><html><body>
   <aside class="sidebar">
     <div class="View" data-deferred-property-input-root="true" data-deferred-property-input-state="editable" data-deferred-property-input-mode="display" role="button">
       <div class="FormControl__LabelWrapper"><label id="FormControl-label145"><span><span>Qualification du lead IA</span></span></label></div>
+      <button aria-label="Autres actions" aria-haspopup="menu"></button>
       <div class="value">Essai IA</div>
     </div>
     <span data-test-id="options_co_logiciel_ia">Options - co logiciel IA</span>
@@ -254,6 +255,13 @@ check('trouve la propriété différée par son libellé',
 check('lit sa valeur sans le libellé',
   hs.readPropertyValue(control) === 'Essai IA', hs.readPropertyValue(control));
 
+// Le bloc porte un menu Actions dès le mode display. Le prendre pour l'éditeur
+// faisait cliquer « Valeur de copie » et attendre une liste qui n'arrivait pas.
+check('ne voit aucun champ tant que la propriété est en mode display',
+  hs.propertyTrigger(hs.CONFIG.asrField, control) === null,
+  String(hs.propertyTrigger(hs.CONFIG.asrField, control)?.outerHTML));
+check('reconnaît le bouton Actions', hs.isActionsMenu(control.querySelector('button')));
+
 // ---------------------------------------------------------------------------
 // 5. Escalade
 // ---------------------------------------------------------------------------
@@ -298,7 +306,8 @@ function rebuildProperty(activateOn) {
   fresh.setAttribute('data-deferred-property-input-root', 'true');
   fresh.setAttribute('data-deferred-property-input-mode', 'display');
   fresh.setAttribute('role', 'button');
-  fresh.innerHTML = '<div class="FormControl__LabelWrapper"><label><span>Qualification du lead IA</span></label></div><div class="value">Essai IA</div>';
+  fresh.innerHTML = '<div class="FormControl__LabelWrapper"><label><span>Qualification du lead IA</span></label></div>'
+    + '<button aria-label="Autres actions" aria-haspopup="menu"></button><div class="value">Essai IA</div>';
   old.replaceWith(fresh);
 
   const activate = () => {
@@ -355,7 +364,15 @@ check('la sonde annonce les candidats bruts sans les confondre avec un menu ouve
   /Candidats « option » présents sur la page \(2\)/.test(probe),
   probe.split('\n').find((l) => l.startsWith('Candidats')));
 
+// Bloc neuf, en mode display : sans ça la trace part d'une propriété déjà
+// activée par les tests précédents et saute l'étape qui nous intéresse.
+rebuildProperty('inner');
 const trace = await hs.traceASR();
+check('la trace dit ce qu\'elle voit avant d\'agir',
+  /déclencheur avant activation = aucun/.test(trace),
+  trace.split('\n').find((l) => l.includes('avant activation')));
+check('la trace montre l\'étape d\'activation',
+  /2\. clic sur le bloc/.test(trace), trace.split('\n').filter((l) => l.startsWith('2.')).join(' | '));
 check('la trace nomme le bloc, la valeur lue et la cible',
   /valeur lue = ".*" → cible "Appel sans réponse/.test(trace),
   trace.split('\n').slice(0, 3).join(' | '));

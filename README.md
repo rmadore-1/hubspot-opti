@@ -173,6 +173,13 @@ le bloc, attend le champ, puis sélectionne — même mécanique de menu que par
 ailleurs. L'activation retente au clavier (`Entrée` sur un `role="button"`) puis
 sur la zone de valeur, tous les blocs ne répondant pas au clic sur leur racine.
 
+Le bloc porte aussi, dès le mode lecture, un bouton **Actions** (copier la
+valeur…). Le prendre pour l'éditeur faisait cliquer *Valeur de copie* puis
+attendre une liste d'options qui n'arrivait jamais. D'où une règle
+structurelle : **en mode `display`, il n'y a pas de champ** — le script
+n'en cherche un qu'une fois le bloc passé en `edit`, et écarte au passage
+tout ce qui porte un `aria-label` d'actions ou un `aria-haspopup="menu"`.
+
 Piège de sélecteur : `[class*="option"]` est **sensible à la casse**, et les
 classes de HubSpot sont en PascalCase (`UISelectOption__StyledOption`). Sans le
 drapeau `i`, ces sélecteurs ne matchent jamais rien — les champs de l'éditeur
