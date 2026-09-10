@@ -297,6 +297,24 @@ check('repart de 2 depuis une qualification étrangère',
 check('la sonde rapporte la chronologie',
   hs.probeText().includes('--- CHRONOLOGIE ---') && hs.timelineText().includes("Cartes d'appel retenues : 3"));
 
+// 15. Sonde structurelle : partir d'un texte et remonter les ancêtres
+const feed = window.document.createElement('section');
+feed.className = 'feed';
+feed.innerHTML = [1, 2, 3, 4].map((n) =>
+  `<article class="card" data-item="${n}"><header><span class="who">Appel - Connecté passé par Aurélien Milano</span></header></article>`
+).join('');
+window.document.body.appendChild(feed);
+
+const anchor = hs.probeAnchor('passé par');
+check('la sonde d\'ancre trouve les éléments les plus profonds',
+  /4 élément\(s\) au plus profond/.test(anchor), anchor.split('\n')[1]);
+check('elle remonte les attributs utiles au ciblage',
+  anchor.includes('data-item="1"'), anchor.split('\n').slice(0, 12).join(' / '));
+check('elle signale le niveau qui se répète',
+  /article\.card[^\n]*niveau répété/.test(anchor),
+  anchor.split('\n').find((l) => l.includes('article')) || '(aucune ligne article)');
+check('elle nomme la frame examinée', anchor.includes('frame principale'));
+
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.detail && !r.ok ? `  [${r.detail}]` : ''}`);

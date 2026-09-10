@@ -198,7 +198,7 @@
           <textarea id="script" readonly spellcheck="false" aria-label="Code source de LazyQ">// ==UserScript==
 // @name         LazyQ — qualification rapide d'appel HubSpot
 // @namespace    https://webdentiste.eu/
-// @version      2.4.0
+// @version      2.5.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -1326,6 +1326,61 @@
     showReport(lines.join('\n'));
   }
 
+  /** Signature lisible d'un noeud : ce qui sert à écrire un sélecteur. */
+  function nodeSignature(el) {
+    const classes = ((el.className &amp;&amp; el.className.toString()) || '')
+      .trim().split(/\s+/).filter(Boolean).slice(0, 3)
+      .map((c) => '.' + c.slice(0, 34)).join('');
+    const attrs = [...el.attributes]
+      .filter((a) => a.name.startsWith('data-') || a.name === 'role' || a.name === 'aria-label')
+      .map((a) => `${a.name}="${a.value.slice(0, 44)}"`)
+      .join(' ');
+    // Balise, id et classes collés comme un sélecteur CSS ; attributs à la suite.
+    const selector = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + classes;
+    return attrs ? `${selector} ${attrs}` : selector;
+  }
+
+  /** Combien de frères partagent la même signature : révèle le niveau répété. */
+  function similarSiblings(el) {
+    const parent = el.parentElement;
+    if (!parent) return 0;
+    const key = (n) => n.tagName + '|' + ((n.className &amp;&amp; n.className.toString()) || '').slice(0, 60);
+    const mine = key(el);
+    return [...parent.children].filter((n) => key(n) === mine).length;
+  }
+
+  /**
+   * Part d'un texte visible à l'écran et remonte la chaîne des ancêtres.
+   * Plus fiable que deviner des sélecteurs : le niveau qui se répète est celui
+   * de la carte, et les attributs remontés donnent de quoi le cibler.
+   */
+  function probeAnchor(text) {
+    const wanted = norm(text);
+    let matches = [...document.querySelectorAll('*')]
+      .filter((el) => isVisible(el) &amp;&amp; norm(el.textContent).includes(wanted));
+    // On garde les plus profonds : les ancêtres sont dumpés juste après.
+    matches = matches.filter((el) => !matches.some((other) => other !== el &amp;&amp; el.contains(other)));
+
+    const lines = [`--- ANCRE "${text}" (frame ${FRAME}) ---`, `${matches.length} élément(s) au plus profond`];
+
+    matches.slice(0, 3).forEach((el, index) => {
+      lines.push('', `#${index + 1} ${nodeSignature(el)}`);
+      lines.push(`   texte : "${(el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160)}"`);
+      lines.push('   ancêtres :');
+      let node = el;
+      for (let depth = 0; node &amp;&amp; depth &lt; 10; depth += 1, node = node.parentElement) {
+        const siblings = similarSiblings(node);
+        const flag = siblings >= 3 ? '   &lt;-- niveau répété' : '';
+        lines.push(`   ${depth} ${nodeSignature(node)}  [frères similaires: ${siblings}]${flag}`);
+      }
+    });
+
+    const report = lines.join('\n');
+    console.log('[LazyQ] ' + report);
+    if (IS_TOP) showReport(report); else toTop({ type: 'status', kind: 'pending', text: 'Ancre : voir la console' });
+    return report;
+  }
+
   function probe() {
     probeReports = [];
     broadcast({ type: 'probe' });
@@ -1403,7 +1458,7 @@
   if (IS_TOP) renderButtons(); else toTop({ type: 'needPresets' });
 
   window.lazyQ = {
-    probe, probeText, probeOptions, timelineText, trigger, runPreset, selectValue, actionsFor, findTrigger,
+    probe, probeText, probeOptions, probeAnchor, timelineText, nodeSignature, trigger, runPreset, selectValue, actionsFor, findTrigger,
     findCallCards, cardInfo, samePhone, cardMatchesPreset, nextASRValue, phonesIn,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
     describeHotkey, matchesHotkey, savePresets, setPresetVisible, toggleSettings,
@@ -1452,7 +1507,7 @@
     <p class="warn">L'éditeur d'appel doit être ouvert — l'appel sélectionné et déplié dans la chronologie — avant de cliquer.</p>
   </section>
 
-  <footer>LazyQ v2.4.0</footer>
+  <footer>LazyQ v2.5.0</footer>
 </main>
 
 <script>
