@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LazyQ — qualification rapide d'appel HubSpot
 // @namespace    https://webdentiste.eu/
-// @version      2.3.0
+// @version      2.4.0
 // @description  Qualifie l'appel ouvert sur une fiche contact HubSpot en un clic ou un raccourci, avec des combinaisons configurables.
 // @match        https://app.hubspot.com/*
 // @match        https://app-eu1.hubspot.com/*
@@ -42,6 +42,30 @@
         "Résultat de l'appel": 'Répondeur/Pas de réponse',
       },
     }],
+
+    // Propriété pilotée par l'option « Auto ASR », en dehors des combinaisons :
+    // sa valeur se déduit de l'historique, elle ne s'absorbe pas.
+    asrField: {
+      name: 'Qualification du lead IA',
+      labels: ['qualification du lead ia', 'qualification lead ia', 'ai lead qualification'],
+      prefix: 'Appel sans réponse',
+      max: 4,
+    },
+
+    // Repérage des cartes d'appel dans la chronologie. `cardSelectors` est
+    // essayé dans l'ordre ; le premier qui donne des cartes gagne.
+    timeline: {
+      cardSelectors: [
+        '[data-test-id*="timeline-item"]',
+        '[data-selenium-test*="timeline-item"]',
+        '[class*="timelineItem"]',
+        '[class*="TimelineItem"]',
+        '[class*="timeline"] li',
+        '[data-test-id*="activity-item"]',
+      ],
+      // HubSpot trie les activités du plus récent au plus ancien par défaut.
+      newestFirst: true,
+    },
 
     // Clique Enregistrer après les actions.
     autoSave: false,
@@ -201,6 +225,90 @@
       if (value && !PLACEHOLDERS.some((p) => norm(p) === norm(value))) values[field.name] = value;
     }
     return values;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chronologie des appels
+  //
+  // Une combinaison s'applique au dernier appel, pas à celui qui est ouvert :
+  // c'est presque toujours celui qu'on vient de passer. L'absorption, elle,
+  // continue de lire l'appel affiché — on absorbe ce qu'on voit.
+  // ---------------------------------------------------------------------------
+
+  // Numéros français et internationaux. Les séparateurs admis excluent « / »
+  // et « : » pour ne pas capturer les dates et les heures des cartes.
+  const PHONE_RE = /(?:\+\d{1,3}[\s.\-]?)?(?:\d[\s.\-]?){8,14}\d/g;
+
+  /** Les 9 derniers chiffres : compare un 06… avec un +336… sans faux négatif. */
+  function phoneKey(raw) {
+    const digits = (raw || '').replace(/\D/g, '');
+    return digits.length >= 9 ? digits.slice(-9) : '';
+  }
+
+  function phonesIn(text) {
+    return [...new Set((text.match(PHONE_RE) || []).map(phoneKey).filter(Boolean))];
+  }
+
+  /** Cartes d'appel de la chronologie, de la plus récente à la plus ancienne. */
+  function findCallCards() {
+    for (const selector of CONFIG.timeline.cardSelectors) {
+      let cards;
+      try { cards = [...document.querySelectorAll(selector)]; } catch (_) { continue; }
+
+      cards = cards.filter((el) => {
+        if (!isVisible(el)) return false;
+        const text = norm(el.textContent);
+        return text.length > 10 && text.length < 3000 && /\bappel|\bcall\b/.test(text);
+      });
+
+      // Les sélecteurs larges remontent la carte et ses enveloppes : on ne garde
+      // que les plus internes, sinon « l'appel d'avant » serait un conteneur.
+      cards = cards.filter((el) => !cards.some((other) => other !== el && el.contains(other)));
+
+      if (cards.length) return CONFIG.timeline.newestFirst ? cards : cards.reverse();
+    }
+    return [];
+  }
+
+  /** Photographie une carte : son texte survit au re-rendu, pas son noeud. */
+  function cardInfo(card) {
+    const text = (card.textContent || '').replace(/\s+/g, ' ').trim();
+    return { text, phones: phonesIn(text) };
+  }
+
+  function samePhone(a, b) {
+    return a.phones.length > 0 && b.phones.length > 0
+      && a.phones.some((phone) => b.phones.includes(phone));
+  }
+
+  /** La carte porte-t-elle déjà les valeurs de la combinaison ? */
+  function cardMatchesPreset(info, preset) {
+    const text = norm(info.text);
+    const values = Object.values(preset.values);
+    return values.length > 0 && values.every((value) => text.includes(norm(value)));
+  }
+
+  /** Ouvre une carte pour faire apparaître son éditeur. */
+  async function openCard(card) {
+    const clickable = [...card.querySelectorAll('button, a, [role="button"]')]
+      .find((el) => isVisible(el) && norm(el.textContent).length > 3);
+    realClick(clickable || card);
+    await sleep(400);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Escalade « Appel sans réponse N »
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Valeur suivante de la qualification : absente ou sans numéro vaut 1, on
+   * monte d'un cran, et on plafonne. Fonction pure, testée isolément.
+   */
+  function nextASRValue(current, field = CONFIG.asrField) {
+    const prefix = norm(field.prefix);
+    const match = norm(current || '').match(new RegExp(prefix + '\\s*(\\d*)'));
+    const rank = match ? (Number(match[1]) || 1) : 1;
+    return `${field.prefix} ${Math.min(rank + 1, field.max)}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -927,7 +1035,7 @@
   function probeText() {
     const lines = [`=== FRAME ${FRAME} ===`];
 
-    for (const field of CONFIG.fields) {
+    for (const field of CONFIG.fields.concat(CONFIG.asrField)) {
       const labels = findLabelNodes(field.labels);
       lines.push(`Champ « ${field.name} » — ${labels.length} libellé(s)`);
       labels.slice(0, 5).forEach((l) => lines.push(`    libellé ${describe(l)}`));
@@ -947,7 +1055,78 @@
     lines.push(`Candidats « option » présents sur la page (${options.length}) :`);
     options.slice(0, 40).forEach((o) => lines.push(`    ${describe(o)}`));
 
+    lines.push('', timelineText());
     return lines.join('\n');
+  }
+
+  /** Ce qu'il faut savoir pour cibler « le dernier appel » et « l'appel d'avant ». */
+  function timelineText() {
+    const lines = ['--- CHRONOLOGIE ---'];
+
+    for (const selector of CONFIG.timeline.cardSelectors) {
+      let raw = [];
+      try { raw = [...document.querySelectorAll(selector)]; } catch (_) { /* sélecteur refusé */ }
+      lines.push(`Sélecteur ${selector} — ${raw.length} élément(s) bruts`);
+    }
+
+    const cards = findCallCards();
+    lines.push(`Cartes d'appel retenues : ${cards.length}`);
+
+    cards.slice(0, 6).forEach((card, index) => {
+      const info = cardInfo(card);
+      lines.push(`  Carte ${index + 1} ${describe(card).split('"')[0]}`);
+      lines.push(`    téléphones détectés : ${info.phones.join(', ') || 'AUCUN'}`);
+      lines.push(`    texte : "${info.text.slice(0, 220)}"`);
+    });
+
+    // La décision que prendra l'option Auto ASR, calculée sur l'état actuel.
+    if (cards.length >= 2) {
+      const last = cardInfo(cards[0]);
+      const previous = cardInfo(cards[1]);
+      lines.push(`Même numéro entre les deux dernières cartes : ${samePhone(last, previous) ? 'OUI' : 'NON'}`);
+      for (const preset of presets) {
+        lines.push(`  « ${preset.label} » — carte 1 correspond : ${cardMatchesPreset(last, preset) ? 'OUI' : 'NON'}`
+          + ` / carte 2 correspond : ${cardMatchesPreset(previous, preset) ? 'OUI' : 'NON'}`);
+      }
+    }
+
+    const asr = findTrigger(CONFIG.asrField.labels);
+    lines.push(`Champ « ${CONFIG.asrField.name} » : ${asr ? describe(asr.trigger) : 'INTROUVABLE'}`);
+    if (asr) {
+      const current = readValue(asr.trigger).trim();
+      lines.push(`    valeur actuelle = "${current}"`);
+      lines.push(`    prochaine valeur calculée = "${nextASRValue(current)}"`);
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Ouvre le menu d'un champ et liste ses options réelles, puis referme.
+   * Contrairement au reste de la sonde, cet appel touche à l'interface : il est
+   * donc explicite et jamais déclenché tout seul.
+   */
+  async function probeOptions(labels) {
+    const names = Array.isArray(labels) ? labels : [labels];
+    const found = findTrigger(names);
+    if (!found) { showReport(`Champ introuvable : ${names.join(' / ')}`); return; }
+
+    const before = new Set(optionNodes(true));
+    realClick(found.trigger);
+    await sleep(600);
+
+    const fresh = optionNodes(true).filter((el) => !before.has(el));
+    const lines = [
+      `--- OPTIONS de ${names[0]} ---`,
+      `déclencheur = ${describe(found.trigger)}`,
+      `valeur actuelle = "${readValue(found.trigger).trim()}"`,
+      `${fresh.length} option(s) apparues :`,
+      ...fresh.slice(0, 60).map((o) => `    "${(o.textContent || '').trim().replace(/\s+/g, ' ')}"`),
+    ];
+
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    console.log('[LazyQ] ' + lines.join('\n'));
+    showReport(lines.join('\n'));
   }
 
   function probe() {
@@ -1027,7 +1206,8 @@
   if (IS_TOP) renderButtons(); else toTop({ type: 'needPresets' });
 
   window.lazyQ = {
-    probe, probeText, trigger, runPreset, selectValue, actionsFor, findTrigger,
+    probe, probeText, probeOptions, timelineText, trigger, runPreset, selectValue, actionsFor, findTrigger,
+    findCallCards, cardInfo, samePhone, cardMatchesPreset, nextASRValue, phonesIn,
     optionNodes, readValue, readCurrentValues, hasFieldsFor, recordHotkey,
     describeHotkey, matchesHotkey, savePresets, setPresetVisible, toggleSettings,
     get presets() { return presets; },

@@ -253,6 +253,50 @@ check('cliquer l\'oeil rétablit le bouton et l\'icône ouverte',
 
 check('les boutons sont un peu moins transparents', hs.CONFIG.buttonOpacity >= 0.85);
 
+// 14. Chronologie et escalade « Appel sans réponse N »
+// Chronologie simulée : deux appels au même numéro, écrits différemment, puis
+// un appel à un autre numéro.
+const timeline = window.document.createElement('div');
+timeline.className = 'timeline';
+timeline.innerHTML = [
+  '<div data-test-id="timeline-item-a">Appel sortant · Répondeur/Pas de réponse · Call Commercial : prospection · +33 6 12 34 56 78 · 10 sept. 2026 14:03</div>',
+  '<div data-test-id="timeline-item-b">Appel sortant · Répondeur/Pas de réponse · Call Commercial : prospection · 06 12 34 56 78 · 9 sept. 2026 11:20</div>',
+  '<div data-test-id="timeline-item-c">Appel entrant · Connecté · 06 99 88 77 66 · 1 sept. 2026 09:15</div>',
+].join('');
+window.document.body.appendChild(timeline);
+
+const cards = hs.findCallCards();
+check('repère les cartes d\'appel de la chronologie', cards.length === 3, String(cards.length));
+check('rend la plus récente en premier',
+  cards[0].dataset.testId === 'timeline-item-a', cards[0]?.dataset.testId);
+
+const [first, second, third] = cards.map(hs.cardInfo);
+check('extrait le numéro malgré les formats différents',
+  first.phones[0] === '612345678' && second.phones[0] === '612345678',
+  JSON.stringify([first.phones, second.phones]));
+check('ne prend pas la date pour un numéro',
+  first.phones.length === 1, JSON.stringify(first.phones));
+check('reconnaît deux appels au même numéro', hs.samePhone(first, second));
+check('distingue un numéro différent', !hs.samePhone(first, third));
+
+check('reconnaît une carte déjà catégorisée comme la combinaison',
+  hs.cardMatchesPreset(second, hs.presets[0]));
+check('ne confond pas avec un appel d\'une autre nature',
+  !hs.cardMatchesPreset(third, hs.presets[0]));
+
+check('escalade depuis une qualification vide',
+  hs.nextASRValue('') === 'Appel sans réponse 2', hs.nextASRValue(''));
+check('escalade depuis la valeur sans numéro',
+  hs.nextASRValue('Appel sans réponse') === 'Appel sans réponse 2');
+check('escalade 2 vers 3', hs.nextASRValue('Appel sans réponse 2') === 'Appel sans réponse 3');
+check('escalade 3 vers 4', hs.nextASRValue('Appel sans réponse 3') === 'Appel sans réponse 4');
+check('plafonne à 4', hs.nextASRValue('Appel sans réponse 4') === 'Appel sans réponse 4');
+check('repart de 2 depuis une qualification étrangère',
+  hs.nextASRValue('Rendez-vous pris') === 'Appel sans réponse 2', hs.nextASRValue('Rendez-vous pris'));
+
+check('la sonde rapporte la chronologie',
+  hs.probeText().includes('--- CHRONOLOGIE ---') && hs.timelineText().includes("Cartes d'appel retenues : 3"));
+
 console.log('\n--- RÉSULTATS ---');
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.detail && !r.ok ? `  [${r.detail}]` : ''}`);
